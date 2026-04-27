@@ -2,43 +2,599 @@ import BasePage from '@renderer/components/base/base-page'
 import RuleItem from '@renderer/components/rules/rule-item'
 import EditRulesModal from '@renderer/components/profiles/edit-rules-modal'
 import { Virtuoso } from 'react-virtuoso'
-import { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import yaml from 'js-yaml'
+import useSWR from 'swr'
 import { Separator } from '@renderer/components/ui/separator'
 import { Input } from '@renderer/components/ui/input'
 import { Button } from '@renderer/components/ui/button'
-import { useRules } from '@renderer/hooks/use-rules'
-import { useProfileConfig } from '@renderer/hooks/use-profile-config'
+import { Badge } from '@renderer/components/ui/badge'
+import { Checkbox } from '@renderer/components/ui/checkbox'
+import { Textarea } from '@renderer/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@renderer/components/ui/select'
+import { useUnifiedUiBundle } from '@renderer/hooks/use-unified-ui-bundle'
+import { useGroups } from '@renderer/hooks/use-groups'
 import { includesIgnoreCase } from '@renderer/utils/includes'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
-import { Database, Pencil } from 'lucide-react'
+import { getRuleStr, mihomoHotReloadConfig, setRuleStr } from '@renderer/utils/ipc'
+import {
+  createUnifiedRuleSavePlan,
+  getUnifiedRuleDisplayTarget,
+  isUserFacingRuleTarget,
+  resolveDefaultRuleOwnerId,
+  UnifiedRuleItem,
+  UnifiedRuleOwner,
+  UnifiedRuleViewScopeId,
+  UnifiedStatusLevel,
+  UnifiedUiBundle
+} from '../../../core/ui/unified-ui'
+import {
+  createEmptyUnifiedRulePatchFile,
+  createUnifiedRulesForDisplay,
+  appendUnifiedManagedRule,
+  dedupeUnifiedRulePatchFile,
+  duplicateUnifiedManagedRulesToOwner,
+  duplicateUnifiedManagedRuleToOwner,
+  getSelectableUnifiedRuleIds,
+  importUnifiedRulesToPatch,
+  isUnifiedManagedRuleSelectable,
+  mapRulePatchesToUnifiedRules,
+  normalizeUnifiedRulePatchFile,
+  removeUnifiedManagedRules,
+  removeUnifiedManagedRule,
+  replaceUnifiedManagedRule,
+  serializeUnifiedRulesExportDocument,
+  setUnifiedManagedRulesEnabled,
+  setUnifiedManagedRuleEnabled,
+  UnifiedRulePatchFile
+} from '../../../core/ui/unified-rule-management'
+import { Copy, Database, Download, Pencil, Plus, Save, Trash2, Upload, X } from 'lucide-react'
+import { toast } from 'sonner'
+
+const helperRuleTypes: AmneziaHelperRuleType[] = [
+  'DOMAIN-SUFFIX',
+  'DOMAIN',
+  'DOMAIN-KEYWORD',
+  'IP-CIDR'
+]
+
+const commonMihomoTargets = ['PROXY', 'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE']
+const vpnTargets = ['PROXY', 'DIRECT', 'REJECT']
+
+interface RuleTargetOption {
+  value: string
+  label: string
+}
 
 const Rules: React.FC = () => {
   const { t } = useTranslation()
-  const { rules } = useRules()
-  const { profileConfig } = useProfileConfig()
   const [filter, setFilter] = useState('')
   const [showRulesEditor, setShowRulesEditor] = useState(false)
+  const [viewScope, setViewScope] = useState<UnifiedRuleViewScopeId>('all')
+  const [selectedOwnerId, setSelectedOwnerId] = useState('')
+  const [newRuleType, setNewRuleType] = useState<AmneziaHelperRuleType>('DOMAIN-SUFFIX')
+  const [newRuleValue, setNewRuleValue] = useState('')
+  const [newRuleTarget, setNewRuleTarget] = useState('PROXY')
+  const [editingRule, setEditingRule] = useState<UnifiedRuleItem | undefined>()
+  const [ownerTypeFilter, setOwnerTypeFilter] = useState<'all' | 'mihomo' | 'amnezia'>('all')
+  const [profileFilter, setProfileFilter] = useState('all')
+  const [actionFilter, setActionFilter] = useState('all')
+  const [duplicateOwnerId, setDuplicateOwnerId] = useState('')
+  const [selectedRuleIds, setSelectedRuleIds] = useState<string[]>([])
+  const [showBulkImport, setShowBulkImport] = useState(false)
+  const [bulkImportText, setBulkImportText] = useState('')
+  const [bulkImportSummary, setBulkImportSummary] = useState('')
+  const [rulesBusy, setRulesBusy] = useState(false)
   const navigate = useNavigate()
+  const { groups } = useGroups()
+  const {
+    bundle,
+    mutateMihomoRules,
+    mutateAmneziaRulePacks,
+    mutateAmneziaStatus,
+    mutateAmneziaSupport
+  } = useUnifiedUiBundle(viewScope === 'all' ? undefined : viewScope)
+  const ruleOwnerProfileIds = useMemo(
+    () => bundle.ruleOwners.map((owner) => owner.ownerProfileId).sort(),
+    [bundle.ruleOwners]
+  )
+  const { data: rulePatches = {}, mutate: mutateRulePatches } = useSWR<
+    Record<string, UnifiedRulePatchFile>
+  >(
+    ruleOwnerProfileIds.length > 0 ? ['unified-rule-patches', ruleOwnerProfileIds.join('|')] : null,
+    () => readRulePatches(ruleOwnerProfileIds)
+  )
+
+  const selectedOwner = useMemo(
+    () => bundle.ruleOwners.find((owner) => owner.id === selectedOwnerId),
+    [bundle.ruleOwners, selectedOwnerId]
+  )
+  const defaultOwnerId = useMemo(
+    () =>
+      resolveDefaultRuleOwnerId(
+        bundle.ruleOwners,
+        viewScope,
+        viewScope === 'all' ? selectedOwnerId : undefined
+      ),
+    [bundle.ruleOwners, selectedOwnerId, viewScope]
+  )
+
+  useEffect(() => {
+    if (!defaultOwnerId) {
+      if (selectedOwnerId) setSelectedOwnerId('')
+      return
+    }
+    if (!selectedOwner || (viewScope !== 'all' && selectedOwner.scopeId !== viewScope)) {
+      setSelectedOwnerId(defaultOwnerId)
+    }
+  }, [defaultOwnerId, selectedOwner, selectedOwnerId, viewScope])
+
+  useEffect(() => {
+    if (duplicateOwnerId && !bundle.ruleOwners.some((owner) => owner.id === duplicateOwnerId)) {
+      setDuplicateOwnerId('')
+    }
+  }, [bundle.ruleOwners, duplicateOwnerId])
+
+  const targetOptions = useMemo<RuleTargetOption[]>(() => {
+    if (selectedOwner?.ownerType === 'amnezia') {
+      return vpnTargets.map((value) => ({
+        value,
+        label: getTargetLabel(t, selectedOwner, value)
+      }))
+    }
+    const groupNames =
+      groups
+        ?.map((group) => group.name)
+        .filter((name): name is string => Boolean(name) && isUserFacingRuleTarget(name)) ?? []
+    const mihomoTargets = [...new Set([...commonMihomoTargets, ...groupNames])]
+    return mihomoTargets.filter(isUserFacingRuleTarget).map((value) => ({
+      value,
+      label: getTargetLabel(t, selectedOwner, value)
+    }))
+  }, [groups, selectedOwner, t])
+
+  useEffect(() => {
+    if (targetOptions.length === 0) return
+    if (!targetOptions.some((option) => option.value === newRuleTarget)) {
+      setNewRuleTarget(targetOptions[0].value)
+    }
+  }, [newRuleTarget, targetOptions])
+
+  const managedRules = useMemo(
+    () => mapRulePatchesToUnifiedRules(bundle.ruleOwners, rulePatches),
+    [bundle.ruleOwners, rulePatches]
+  )
+  const allDisplayRules = useMemo(
+    () => createUnifiedRulesForDisplay({ runtimeRules: bundle.allRules, managedRules }),
+    [bundle.allRules, managedRules]
+  )
+  const visibleRules = useMemo(() => {
+    const scopedRules =
+      viewScope === 'all'
+        ? allDisplayRules
+        : allDisplayRules.filter((rule) => rule.scopeId === viewScope)
+    return scopedRules.filter((rule) => {
+      if (ownerTypeFilter !== 'all' && rule.ownerType !== ownerTypeFilter) return false
+      if (profileFilter !== 'all' && rule.ownerProfileId !== profileFilter) return false
+      if (actionFilter !== 'all' && rule.target !== actionFilter) return false
+      return true
+    })
+  }, [actionFilter, allDisplayRules, ownerTypeFilter, profileFilter, viewScope])
 
   const filteredRules = useMemo(() => {
-    if (!rules) return []
-    if (filter === '') return rules.rules
-    return rules.rules.filter((rule) => {
+    if (filter === '') return visibleRules
+    return visibleRules.filter((rule) => {
       return (
-        includesIgnoreCase(rule.payload, filter) ||
+        includesIgnoreCase(rule.value, filter) ||
         includesIgnoreCase(rule.type, filter) ||
-        includesIgnoreCase(rule.proxy, filter)
+        includesIgnoreCase(rule.target, filter) ||
+        includesIgnoreCase(getUnifiedRuleDisplayTarget(rule.ownerType, rule.target), filter) ||
+        includesIgnoreCase(rule.ownerProfileName, filter) ||
+        includesIgnoreCase(rule.packName, filter) ||
+        includesIgnoreCase(rule.note, filter) ||
+        includesIgnoreCase(rule.source, filter)
       )
     })
-  }, [rules, filter])
+  }, [filter, visibleRules])
+
+  const scopeWarnings = useMemo(
+    () =>
+      bundle.ruleScopes.filter(
+        (scope) => scope.unavailableReason && (viewScope === 'all' || scope.id === viewScope)
+      ),
+    [bundle.ruleScopes, viewScope]
+  )
+  const ownerUnavailable = !selectedOwner || !selectedOwner.canEditRules
+  const duplicateRule = useMemo(() => {
+    const value = newRuleValue.trim()
+    if (!value) return false
+    return allDisplayRules.some(
+      (rule) =>
+        rule.id !== editingRule?.id &&
+        rule.ownerProfileId === selectedOwner?.ownerProfileId &&
+        rule.type === newRuleType &&
+        rule.value === value &&
+        rule.target === newRuleTarget
+    )
+  }, [
+    allDisplayRules,
+    editingRule?.id,
+    newRuleTarget,
+    newRuleType,
+    newRuleValue,
+    selectedOwner?.ownerProfileId
+  ])
+  const canAddRule = !rulesBusy && !!newRuleValue.trim() && !ownerUnavailable && !duplicateRule
+  const editableRuleProfileId = selectedOwner?.ownerProfileId
+  const duplicateOwner = useMemo(
+    () => bundle.ruleOwners.find((owner) => owner.id === duplicateOwnerId),
+    [bundle.ruleOwners, duplicateOwnerId]
+  )
+  const actionFilterOptions = useMemo(
+    () => [...new Set(allDisplayRules.map((rule) => rule.target).filter(isUserFacingRuleTarget))],
+    [allDisplayRules]
+  )
+  const filteredManagedRules = useMemo(
+    () => filteredRules.filter(isUnifiedManagedRuleSelectable),
+    [filteredRules]
+  )
+  const selectedOwnerManagedRules = useMemo(
+    () =>
+      selectedOwner
+        ? allDisplayRules.filter(
+            (rule) =>
+              rule.ownerProfileId === selectedOwner.ownerProfileId &&
+              isUnifiedManagedRuleSelectable(rule)
+          )
+        : [],
+    [allDisplayRules, selectedOwner]
+  )
+  const selectedRuleIdSet = useMemo(() => new Set(selectedRuleIds), [selectedRuleIds])
+  const selectedRules = useMemo(
+    () =>
+      allDisplayRules.filter(
+        (rule) => selectedRuleIdSet.has(rule.id) && isUnifiedManagedRuleSelectable(rule)
+      ),
+    [allDisplayRules, selectedRuleIdSet]
+  )
+  const selectableFilteredRuleIds = useMemo(
+    () => getSelectableUnifiedRuleIds(filteredRules),
+    [filteredRules]
+  )
+  const allFilteredManagedRulesSelected =
+    selectableFilteredRuleIds.length > 0 &&
+    selectableFilteredRuleIds.every((ruleId) => selectedRuleIdSet.has(ruleId))
+
+  useEffect(() => {
+    const availableRuleIds = new Set(allDisplayRules.map((rule) => rule.id))
+    setSelectedRuleIds((current) => {
+      const next = current.filter((ruleId) => availableRuleIds.has(ruleId))
+      return next.length === current.length ? current : next
+    })
+  }, [allDisplayRules])
+
+  const handleAddRule = async (): Promise<void> => {
+    const value = newRuleValue.trim()
+    if (!value || rulesBusy) return
+
+    if (duplicateRule) {
+      toast.error(t('pages.rules.duplicateRule'))
+      return
+    }
+
+    if (ownerUnavailable || !selectedOwner) {
+      toast.error(t('pages.rules.ruleOwnerUnavailable'))
+      return
+    }
+
+    setRulesBusy(true)
+    try {
+      const draft = {
+        type: newRuleType,
+        value,
+        target: newRuleTarget
+      }
+
+      if (editingRule) {
+        await updateManagedRule(editingRule, draft)
+        toast.success(t('pages.rules.ruleUpdated', { name: selectedOwner.ownerProfileName }))
+      } else {
+        const plan = createUnifiedRuleSavePlan({
+          owner: selectedOwner,
+          ...draft
+        })
+        const added = await appendProfileRule(plan.ownerProfileId, plan.serializedRule)
+        if (!added) {
+          toast.error(t('pages.rules.duplicateRule'))
+          await refreshRuleState()
+          return
+        }
+        toast.success(t(plan.successMessageKey, { name: plan.ownerProfileName }))
+      }
+      await mihomoHotReloadConfig()
+      mutateMihomoRules()
+      await refreshRuleState()
+      setNewRuleValue('')
+      setEditingRule(undefined)
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
+  const refreshRuleState = async (): Promise<void> => {
+    await Promise.all([
+      mutateRulePatches(),
+      mutateAmneziaRulePacks(),
+      mutateAmneziaStatus(),
+      mutateAmneziaSupport()
+    ])
+  }
+
+  const handleStartEditRule = (rule: UnifiedRuleItem): void => {
+    if (!rule.editable || !rule.ownerProfileId) return
+    setEditingRule(rule)
+    setSelectedOwnerId(`${rule.ownerType}:${rule.ownerProfileId}`)
+    setNewRuleType(rule.type as AmneziaHelperRuleType)
+    setNewRuleValue(rule.value)
+    setNewRuleTarget(rule.target)
+  }
+
+  const handleCancelEdit = (): void => {
+    setEditingRule(undefined)
+    setNewRuleValue('')
+    setNewRuleTarget('PROXY')
+  }
+
+  const handleDeleteRule = async (rule: UnifiedRuleItem): Promise<void> => {
+    if (!rule.ownerProfileId || !rule.managedPatchSection || rule.managedPatchIndex === undefined)
+      return
+    setRulesBusy(true)
+    try {
+      const patch = getOwnerPatch(rule.ownerProfileId)
+      const next = removeUnifiedManagedRule(patch, rule.managedPatchSection, rule.managedPatchIndex)
+      await writeProfileRulePatch(rule.ownerProfileId, next)
+      await mihomoHotReloadConfig()
+      mutateMihomoRules()
+      await refreshRuleState()
+      toast.success(t('pages.rules.ruleDeleted'))
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
+  const handleToggleRule = async (rule: UnifiedRuleItem): Promise<void> => {
+    if (!rule.ownerProfileId || !rule.managedPatchSection || rule.managedPatchIndex === undefined)
+      return
+    setRulesBusy(true)
+    try {
+      const patch = getOwnerPatch(rule.ownerProfileId)
+      const next = setUnifiedManagedRuleEnabled(
+        patch,
+        rule.managedPatchSection,
+        rule.managedPatchIndex,
+        !rule.enabled
+      )
+      await writeProfileRulePatch(rule.ownerProfileId, next)
+      await mihomoHotReloadConfig()
+      mutateMihomoRules()
+      await refreshRuleState()
+      toast.success(rule.enabled ? t('pages.rules.ruleDisabled') : t('pages.rules.ruleEnabled'))
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
+  const handleDuplicateRule = async (rule: UnifiedRuleItem): Promise<void> => {
+    if (
+      !rule.ownerProfileId ||
+      !rule.managedPatchSection ||
+      rule.managedPatchIndex === undefined ||
+      !duplicateOwner
+    ) {
+      return
+    }
+
+    setRulesBusy(true)
+    try {
+      const sourcePatch = getOwnerPatch(rule.ownerProfileId)
+      const targetPatch = getOwnerPatch(duplicateOwner.ownerProfileId)
+      const nextTargetPatch = duplicateUnifiedManagedRuleToOwner({
+        sourcePatch,
+        sourceSection: rule.managedPatchSection,
+        sourceIndex: rule.managedPatchIndex,
+        targetPatch
+      })
+      await writeProfileRulePatch(duplicateOwner.ownerProfileId, nextTargetPatch)
+      await mihomoHotReloadConfig()
+      mutateMihomoRules()
+      await refreshRuleState()
+      toast.success(t('pages.rules.ruleDuplicated', { name: duplicateOwner.ownerProfileName }))
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
+  const handleToggleRuleSelection = (rule: UnifiedRuleItem, selected: boolean): void => {
+    if (!isUnifiedManagedRuleSelectable(rule)) return
+    setSelectedRuleIds((current) => {
+      if (selected) return current.includes(rule.id) ? current : [...current, rule.id]
+      return current.filter((ruleId) => ruleId !== rule.id)
+    })
+  }
+
+  const handleSelectAllFilteredRules = (): void => {
+    setSelectedRuleIds((current) => {
+      const next = new Set(current)
+      selectableFilteredRuleIds.forEach((ruleId) => next.add(ruleId))
+      return [...next]
+    })
+  }
+
+  const handleClearSelection = (): void => {
+    setSelectedRuleIds([])
+  }
+
+  const handleBulkSetEnabled = async (enabled: boolean): Promise<void> => {
+    if (rulesBusy || selectedRules.length === 0) return
+    setRulesBusy(true)
+    try {
+      for (const [profileId, rules] of groupManagedRulesByProfileId(selectedRules)) {
+        const next = setUnifiedManagedRulesEnabled(getOwnerPatch(profileId), rules, enabled)
+        await writeProfileRulePatch(profileId, next)
+      }
+      await mihomoHotReloadConfig()
+      mutateMihomoRules()
+      await refreshRuleState()
+      toast.success(
+        enabled
+          ? t('pages.rules.bulkRulesEnabled', { count: selectedRules.length })
+          : t('pages.rules.bulkRulesDisabled', { count: selectedRules.length })
+      )
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
+  const handleBulkDelete = async (): Promise<void> => {
+    if (rulesBusy || selectedRules.length === 0) return
+    setRulesBusy(true)
+    try {
+      for (const [profileId, rules] of groupManagedRulesByProfileId(selectedRules)) {
+        const next = removeUnifiedManagedRules(getOwnerPatch(profileId), rules)
+        await writeProfileRulePatch(profileId, next)
+      }
+      await mihomoHotReloadConfig()
+      mutateMihomoRules()
+      await refreshRuleState()
+      toast.success(t('pages.rules.bulkRulesDeleted', { count: selectedRules.length }))
+      setSelectedRuleIds([])
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
+  const handleBulkDuplicate = async (): Promise<void> => {
+    if (rulesBusy || selectedRules.length === 0 || !duplicateOwner) return
+    setRulesBusy(true)
+    try {
+      const result = duplicateUnifiedManagedRulesToOwner({
+        targetOwner: duplicateOwner,
+        targetPatch: getOwnerPatch(duplicateOwner.ownerProfileId),
+        rules: selectedRules
+      })
+      if (result.added > 0) {
+        await writeProfileRulePatch(duplicateOwner.ownerProfileId, result.patch)
+        await mihomoHotReloadConfig()
+        mutateMihomoRules()
+        await refreshRuleState()
+      }
+      toast.success(
+        t('pages.rules.bulkRulesDuplicated', {
+          name: duplicateOwner.ownerProfileName,
+          added: result.added,
+          skipped: result.skippedDuplicate,
+          invalid: result.invalid.length
+        })
+      )
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
+  const handleBulkImport = async (): Promise<void> => {
+    if (rulesBusy || ownerUnavailable || !selectedOwner || !bulkImportText.trim()) return
+    setRulesBusy(true)
+    try {
+      const result = importUnifiedRulesToPatch({
+        patch: getOwnerPatch(selectedOwner.ownerProfileId),
+        type: newRuleType,
+        target: newRuleTarget,
+        text: bulkImportText
+      })
+      if (result.added > 0) {
+        await writeProfileRulePatch(selectedOwner.ownerProfileId, result.patch)
+        await mihomoHotReloadConfig()
+        mutateMihomoRules()
+        await refreshRuleState()
+        setBulkImportText('')
+      }
+      const summary = t('pages.rules.bulkImportSummary', {
+        added: result.added,
+        skipped: result.skippedDuplicate,
+        invalid: result.invalid.length
+      })
+      setBulkImportSummary(summary)
+      toast.success(summary)
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
+  const handleExportRules = async (rules: UnifiedRuleItem[]): Promise<void> => {
+    const exportableRules = rules.filter(isUnifiedManagedRuleSelectable)
+    if (exportableRules.length === 0) {
+      toast.error(t('pages.rules.noExportableRules'))
+      return
+    }
+
+    try {
+      await copyTextToClipboard(serializeUnifiedRulesExportDocument(exportableRules))
+      toast.success(t('pages.rules.rulesExported', { count: exportableRules.length }))
+    } catch (e) {
+      toast.error(`${e}`)
+    }
+  }
+
+  const updateManagedRule = async (
+    rule: UnifiedRuleItem,
+    draft: { type: string; value: string; target: string }
+  ): Promise<void> => {
+    if (!rule.ownerProfileId || !rule.managedPatchSection || rule.managedPatchIndex === undefined) {
+      throw new Error(t('pages.rules.readOnlyRule'))
+    }
+    const patch = getOwnerPatch(rule.ownerProfileId)
+    const next = replaceUnifiedManagedRule(
+      patch,
+      rule.managedPatchSection,
+      rule.managedPatchIndex,
+      draft
+    )
+    await writeProfileRulePatch(rule.ownerProfileId, next)
+  }
+
+  const getOwnerPatch = (profileId: string): UnifiedRulePatchFile => {
+    return rulePatches[profileId] ?? createEmptyUnifiedRulePatchFile()
+  }
 
   return (
     <BasePage
       title={t('pages.rules.title')}
       header={
         <>
-          {profileConfig?.current && (
+          {editableRuleProfileId && (
             <Button
               size="icon-sm"
               variant="ghost"
@@ -61,38 +617,585 @@ const Rules: React.FC = () => {
         </>
       }
     >
-      {showRulesEditor && profileConfig?.current && (
+      {showRulesEditor && editableRuleProfileId && (
         <EditRulesModal
-          id={profileConfig.current}
-          onClose={() => setShowRulesEditor(false)}
+          id={editableRuleProfileId}
+          onClose={() => {
+            setShowRulesEditor(false)
+            mutateMihomoRules()
+          }}
         />
       )}
-      <div className="sticky top-0 z-40">
-        <div className="flex px-2 pb-2">
-          <Input
-            className="h-8 text-sm"
-            value={filter}
-            placeholder={t('common.filter')}
-            onChange={(e) => setFilter(e.target.value)}
-          />
+
+      <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-xl">
+        <div className="px-2 pb-2 flex flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Select
+                value={viewScope}
+                onValueChange={(value) => setViewScope(value as UnifiedRuleViewScopeId)}
+              >
+                <SelectTrigger size="sm" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('pages.rules.scopeAll')}</SelectItem>
+                  {bundle.ruleScopes.map((scope) => (
+                    <SelectItem key={scope.id} value={scope.id}>
+                      {t(scope.titleKey)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <RuleCountBadges bundle={bundle} rules={allDisplayRules} />
+            </div>
+            <UnifiedStatusBadges bundle={bundle} />
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Select
+              value={selectedOwnerId}
+              onValueChange={setSelectedOwnerId}
+              disabled={Boolean(editingRule)}
+            >
+              <SelectTrigger size="sm" className="w-56">
+                <SelectValue placeholder={t('pages.rules.selectRuleOwner')} />
+              </SelectTrigger>
+              <SelectContent>
+                {bundle.ruleOwners.map((owner) => (
+                  <SelectItem key={owner.id} value={owner.id}>
+                    {getOwnerLabel(t, owner)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={newRuleType}
+              onValueChange={(value) => setNewRuleType(value as AmneziaHelperRuleType)}
+            >
+              <SelectTrigger size="sm" className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {helperRuleTypes.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              className="h-8 min-w-60 flex-1 text-sm"
+              value={newRuleValue}
+              placeholder={t('profile.helperRuleValuePlaceholder')}
+              onChange={(e) => setNewRuleValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  handleAddRule()
+                }
+              }}
+            />
+            <Select value={newRuleTarget} onValueChange={setNewRuleTarget}>
+              <SelectTrigger size="sm" className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {targetOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button size="sm" className="gap-1.5" disabled={!canAddRule} onClick={handleAddRule}>
+              {editingRule ? <Save className="size-4" /> : <Plus className="size-4" />}
+              {editingRule ? t('pages.rules.saveRule') : t('pages.rules.addRule')}
+            </Button>
+            {editingRule && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleCancelEdit}>
+                <X className="size-4" />
+                {t('common.cancel')}
+              </Button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={ownerTypeFilter}
+              onValueChange={(value) => setOwnerTypeFilter(value as 'all' | 'mihomo' | 'amnezia')}
+            >
+              <SelectTrigger size="sm" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('pages.rules.scopeAll')}</SelectItem>
+                <SelectItem value="mihomo">{t('pages.rules.ownerMihomo')}</SelectItem>
+                <SelectItem value="amnezia">{t('pages.rules.ownerVpn')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={profileFilter} onValueChange={setProfileFilter}>
+              <SelectTrigger size="sm" className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('pages.rules.allProfiles')}</SelectItem>
+                {bundle.ruleOwners.map((owner) => (
+                  <SelectItem key={owner.id} value={owner.ownerProfileId}>
+                    {getOwnerLabel(t, owner)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={actionFilter} onValueChange={setActionFilter}>
+              <SelectTrigger size="sm" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('pages.rules.allActions')}</SelectItem>
+                {actionFilterOptions.map((target) => (
+                  <SelectItem key={target} value={target}>
+                    {getTargetLabel(t, selectedOwner, target)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={duplicateOwnerId} onValueChange={setDuplicateOwnerId}>
+              <SelectTrigger size="sm" className="w-52">
+                <SelectValue placeholder={t('pages.rules.duplicateTarget')} />
+              </SelectTrigger>
+              <SelectContent>
+                {bundle.ruleOwners.map((owner) => (
+                  <SelectItem key={owner.id} value={owner.id}>
+                    {getOwnerLabel(t, owner)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              className="h-8 min-w-60 flex-1 text-sm"
+              value={filter}
+              placeholder={t('common.filter')}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            {duplicateRule && (
+              <span className="text-xs text-warning">{t('pages.rules.duplicateRule')}</span>
+            )}
+            {ownerUnavailable && (
+              <span className="text-xs text-warning">{t('pages.rules.ruleOwnerUnavailable')}</span>
+            )}
+            {scopeWarnings.map((scope) => (
+              <span key={scope.id} className="text-xs text-muted-foreground">
+                {getScopeUnavailableText(t, scope.unavailableReason ?? '')}
+              </span>
+            ))}
+            {bundle.legacyHelperRules.totalRules > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {t('pages.rules.hiddenLegacyHelperRules', {
+                  count: bundle.legacyHelperRules.totalRules,
+                  enabled: bundle.legacyHelperRules.enabledRules
+                })}
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selectableFilteredRuleIds.length === 0}
+              onClick={
+                allFilteredManagedRulesSelected
+                  ? handleClearSelection
+                  : handleSelectAllFilteredRules
+              }
+            >
+              {allFilteredManagedRulesSelected
+                ? t('pages.rules.clearSelection')
+                : t('pages.rules.selectFiltered')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => setShowBulkImport((value) => !value)}
+            >
+              <Upload className="size-4" />
+              {t('pages.rules.bulkImport')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              disabled={filteredManagedRules.length === 0}
+              onClick={() => handleExportRules(filteredManagedRules)}
+            >
+              <Download className="size-4" />
+              {t('pages.rules.exportFiltered')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              disabled={selectedOwnerManagedRules.length === 0}
+              onClick={() => handleExportRules(selectedOwnerManagedRules)}
+            >
+              <Download className="size-4" />
+              {t('pages.rules.exportOwner')}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {t('pages.rules.bulkEditableHint')}
+            </span>
+          </div>
+
+          {showBulkImport && (
+            <div className="rounded-lg border border-border bg-card/40 p-2">
+              <div className="mb-2 text-xs text-muted-foreground">
+                {t('pages.rules.bulkImportOwnerHint', {
+                  name: selectedOwner ? getOwnerLabel(t, selectedOwner) : '-',
+                  action: getTargetLabel(t, selectedOwner, newRuleTarget)
+                })}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                <Textarea
+                  className="min-h-20 flex-1 text-sm"
+                  value={bulkImportText}
+                  placeholder={t('pages.rules.bulkImportPlaceholder')}
+                  onChange={(e) => setBulkImportText(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={
+                    rulesBusy || ownerUnavailable || !selectedOwner || !bulkImportText.trim()
+                  }
+                  onClick={handleBulkImport}
+                >
+                  <Upload className="size-4" />
+                  {t('pages.rules.bulkImportApply')}
+                </Button>
+              </div>
+              {bulkImportSummary && (
+                <div className="mt-2 text-xs text-muted-foreground">{bulkImportSummary}</div>
+              )}
+            </div>
+          )}
+
+          {selectedRules.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/40 p-2">
+              <span className="text-xs font-medium">
+                {t('pages.rules.selectedRules', { count: selectedRules.length })}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={rulesBusy}
+                onClick={() => handleBulkSetEnabled(true)}
+              >
+                {t('pages.rules.enableSelected')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={rulesBusy}
+                onClick={() => handleBulkSetEnabled(false)}
+              >
+                {t('pages.rules.disableSelected')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={rulesBusy || !duplicateOwner}
+                onClick={handleBulkDuplicate}
+              >
+                {t('pages.rules.duplicateSelected')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={rulesBusy}
+                onClick={() => handleExportRules(selectedRules)}
+              >
+                {t('pages.rules.exportSelected')}
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={rulesBusy}
+                onClick={handleBulkDelete}
+              >
+                {t('pages.rules.deleteSelected')}
+              </Button>
+              <Button size="sm" variant="ghost" disabled={rulesBusy} onClick={handleClearSelection}>
+                {t('pages.rules.clearSelection')}
+              </Button>
+            </div>
+          )}
         </div>
-        <Separator className="mx-2"/>
+        <Separator className="mx-2" />
       </div>
-      <div className="h-[calc(100vh-108px)] mt-px">
+      <div className="h-[calc(100vh-214px)] mt-px">
         <Virtuoso
           data={filteredRules}
           itemContent={(i, rule) => (
             <RuleItem
               index={i}
               type={rule.type}
-              payload={rule.payload}
-              proxy={rule.proxy}
+              payload={rule.value}
+              proxy={getRuleTargetLabel(t, rule)}
               size={rule.size}
+              enabled={rule.enabled}
+              note={rule.note}
+              sourceLabel={getRuleSourceLabel(t, rule)}
+              scopeLabel={rule.ownerProfileName}
+              disabledLabel={t('profile.helperRuleDisabled')}
+              actions={
+                rule.editable && rule.managedPatchSection !== undefined ? (
+                  <>
+                    <Checkbox
+                      checked={selectedRuleIdSet.has(rule.id)}
+                      disabled={rulesBusy}
+                      title={t('pages.rules.selectRule')}
+                      onCheckedChange={(checked) =>
+                        handleToggleRuleSelection(rule, checked === true)
+                      }
+                    />
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      disabled={rulesBusy}
+                      title={t('pages.rules.editRule')}
+                      onClick={() => handleStartEditRule(rule)}
+                    >
+                      <Pencil className="size-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={rulesBusy}
+                      onClick={() => handleToggleRule(rule)}
+                    >
+                      {rule.enabled ? t('pages.rules.disableRule') : t('pages.rules.enableRule')}
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      disabled={
+                        rulesBusy ||
+                        !duplicateOwner ||
+                        duplicateOwner.ownerProfileId === rule.ownerProfileId
+                      }
+                      title={t('pages.rules.duplicateRuleToProfile')}
+                      onClick={() => handleDuplicateRule(rule)}
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      disabled={rulesBusy}
+                      title={t('pages.rules.deleteRule')}
+                      onClick={() => handleDeleteRule(rule)}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </>
+                ) : undefined
+              }
             />
           )}
         />
       </div>
     </BasePage>
+  )
+}
+
+function RuleCountBadges({
+  bundle,
+  rules
+}: {
+  bundle: UnifiedUiBundle
+  rules: UnifiedRuleItem[]
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const mihomo = rules.filter((rule) => rule.scopeId === 'mihomo')
+  const amnezia = rules.filter((rule) => rule.scopeId === 'amnezia')
+  return (
+    <>
+      <Badge variant="secondary" className="rounded-sm">
+        {t('pages.rules.scopeAll')}: {rules.length}
+      </Badge>
+      {bundle.ruleScopes.some((scope) => scope.id === 'mihomo') && (
+        <Badge variant="outline" className="rounded-sm">
+          {t('pages.rules.scopeMihomo')}: {mihomo.length}
+        </Badge>
+      )}
+      {bundle.ruleScopes.some((scope) => scope.id === 'amnezia') && (
+        <Badge variant="outline" className="rounded-sm">
+          {t('pages.rules.scopeAmnezia')}: {amnezia.filter((rule) => rule.enabled).length}/
+          {amnezia.length}
+        </Badge>
+      )}
+    </>
+  )
+}
+
+function UnifiedStatusBadges({ bundle }: { bundle: UnifiedUiBundle }): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      <Badge
+        variant={getStatusBadgeVariant(bundle.connectionStatus.mihomoStatus)}
+        className="rounded-sm"
+      >
+        {t('pages.rules.scopeMihomo')}: {getStatusLabel(t, bundle.connectionStatus.mihomoStatus)}
+      </Badge>
+      <Badge
+        variant={getStatusBadgeVariant(bundle.connectionStatus.amneziaStatus)}
+        className="rounded-sm"
+      >
+        {t('pages.rules.scopeAmnezia')}: {getStatusLabel(t, bundle.connectionStatus.amneziaStatus)}
+      </Badge>
+      <Badge
+        variant={getStatusBadgeVariant(bundle.connectionStatus.tunStatus)}
+        className="rounded-sm"
+      >
+        TUN: {getStatusLabel(t, bundle.connectionStatus.tunStatus)}
+      </Badge>
+    </div>
+  )
+}
+
+function getStatusBadgeVariant(
+  status: UnifiedStatusLevel
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'blocked') return 'destructive'
+  if (status === 'warning') return 'outline'
+  if (status === 'ready') return 'default'
+  return 'secondary'
+}
+
+function getStatusLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  status: UnifiedStatusLevel
+): string {
+  switch (status) {
+    case 'ready':
+      return t('profile.helperReadinessComponentReady')
+    case 'warning':
+      return t('profile.helperReadinessComponentWarning')
+    case 'blocked':
+      return t('profile.helperReadinessComponentBlocked')
+    case 'unknown':
+      return t('profile.helperReadinessComponentUnknown')
+  }
+}
+
+function getRuleSourceLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  rule: UnifiedRuleItem
+): string {
+  return rule.ownerType === 'amnezia' ? t('pages.rules.ownerVpn') : t('pages.rules.ownerMihomo')
+}
+
+function getRuleTargetLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  rule: UnifiedRuleItem
+): string {
+  const displayTarget = getUnifiedRuleDisplayTarget(rule.ownerType, rule.target)
+  return displayTarget === 'VPN / PROXY' ? t('pages.rules.actionVpnProxy') : displayTarget
+}
+
+function getTargetLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  owner: UnifiedRuleOwner | undefined,
+  target: string
+): string {
+  const displayTarget = getUnifiedRuleDisplayTarget(owner?.ownerType ?? 'mihomo', target)
+  return displayTarget === 'VPN / PROXY' ? t('pages.rules.actionVpnProxy') : displayTarget
+}
+
+function getOwnerLabel(t: ReturnType<typeof useTranslation>['t'], owner: UnifiedRuleOwner): string {
+  const ownerTypeLabel =
+    owner.ownerType === 'amnezia' ? t('pages.rules.ownerVpn') : t('pages.rules.ownerMihomo')
+  const currentSuffix = owner.isCurrent ? ` · ${t('pages.rules.currentOwner')}` : ''
+  return `${ownerTypeLabel}: ${owner.ownerProfileName}${currentSuffix}`
+}
+
+function getScopeUnavailableText(
+  t: ReturnType<typeof useTranslation>['t'],
+  reason: string
+): string {
+  switch (reason) {
+    case 'no_current_mihomo_profile':
+    case 'no_mihomo_rule_owner':
+      return t('pages.rules.noCurrentMihomoProfile')
+    case 'no_amnezia_rule_owner':
+      return t('pages.rules.noAmneziaRuleOwner')
+    default:
+      return reason
+  }
+}
+
+async function appendProfileRule(profileId: string, serializedRule: string): Promise<boolean> {
+  const rulePatch = await readProfileRulePatch(profileId)
+  const result = appendUnifiedManagedRule(rulePatch, serializedRule)
+  await writeProfileRulePatch(profileId, result.patch)
+  return result.added
+}
+
+function groupManagedRulesByProfileId(rules: UnifiedRuleItem[]): Map<string, UnifiedRuleItem[]> {
+  const grouped = new Map<string, UnifiedRuleItem[]>()
+  for (const rule of rules) {
+    if (!isUnifiedManagedRuleSelectable(rule)) continue
+    const current = grouped.get(rule.ownerProfileId) ?? []
+    current.push(rule)
+    grouped.set(rule.ownerProfileId, current)
+  }
+  return grouped
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (!navigator.clipboard?.writeText) {
+    throw new Error('Clipboard API is unavailable')
+  }
+  await navigator.clipboard.writeText(text)
+}
+
+async function readRulePatches(
+  profileIds: string[]
+): Promise<Record<string, UnifiedRulePatchFile>> {
+  const entries = await Promise.all(
+    profileIds.map(async (profileId) => [profileId, await readProfileRulePatch(profileId)] as const)
+  )
+  return Object.fromEntries(entries)
+}
+
+async function readProfileRulePatch(profileId: string): Promise<UnifiedRulePatchFile> {
+  try {
+    const content = await getRuleStr(profileId)
+    const parsed = yaml.load(content)
+    return normalizeUnifiedRulePatchFile(parsed)
+  } catch {
+    // No per-profile rule patch exists yet.
+  }
+
+  return createEmptyUnifiedRulePatchFile()
+}
+
+async function writeProfileRulePatch(
+  profileId: string,
+  rulePatch: UnifiedRulePatchFile
+): Promise<void> {
+  const normalizedPatch = dedupeUnifiedRulePatchFile(rulePatch)
+  await setRuleStr(
+    profileId,
+    yaml.dump({
+      prepend: normalizedPatch.prepend,
+      append: normalizedPatch.append,
+      delete: normalizedPatch.delete,
+      disabled: normalizedPatch.disabled
+    })
   )
 }
 

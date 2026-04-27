@@ -1,5 +1,5 @@
 import fs from 'fs'
-import path from 'path'
+import * as path from 'path'
 import plist from 'plist'
 import { findBestAppPath, isIOSApp } from './icon'
 import { spawnSync } from 'child_process'

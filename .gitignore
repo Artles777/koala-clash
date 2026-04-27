@@ -2,6 +2,7 @@ node_modules
 resources/files
 resources/sidecar
 extra
+helper-artifacts
 dist
 out
 .DS_Store

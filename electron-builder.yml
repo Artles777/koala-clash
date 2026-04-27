@@ -18,6 +18,10 @@ files:
 extraResources:
   - from: './extra/'
     to: ''
+  - from: './src/main/runtime/amnezia-helper-proxy-backend.cjs'
+    to: 'files'
+  - from: './src/main/runtime/amnezia-helper-stub.cjs'
+    to: 'files'
 protocols:
   name: 'Koala Clash URI Scheme'
   schemes:

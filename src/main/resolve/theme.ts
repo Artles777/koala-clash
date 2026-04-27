@@ -1,7 +1,7 @@
 import { copyFile, readdir, readFile, writeFile } from 'fs/promises'
 import { themesDir } from '../utils/dirs'
 import { t } from '../utils/i18n'
-import path from 'path'
+import * as path from 'path'
 import axios from 'axios'
 import AdmZip from 'adm-zip'
 import { getRuntimeConfig } from '../core/factory'

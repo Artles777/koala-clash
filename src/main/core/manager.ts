@@ -33,8 +33,8 @@ import {
 import { readFile, rm, writeFile } from 'fs/promises'
 import { promisify } from 'util'
 import { mainWindow, showError } from '..'
-import path from 'path'
-import os from 'os'
+import * as path from 'path'
+import * as os from 'os'
 import { createWriteStream, existsSync } from 'fs'
 import { disableSysProxy, triggerSysProxy } from '../sys/sysproxy'
 import { getAxios } from './mihomoApi'
@@ -77,9 +77,7 @@ let providerNames = new Set<string>()
 let unmatchedProviders = new Set<string>()
 
 const normalize = (s: string): string =>
-  s
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
-    .normalize('NFC')
+  s.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).normalize('NFC')
 
 export async function resetProviderTracking(): Promise<void> {
   const { 'rule-providers': ruleProviders, 'proxy-providers': proxyProviders } =
@@ -253,7 +251,10 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
                   new Promise((r) => setTimeout(r, 100)).then(() =>
                     patchMihomoConfig({ 'log-level': logLevel })
                   )
-                ]).then(() => resolve())
+                ]).then(() => {
+                  void syncCurrentAmneziaHelperAfterCoreStart()
+                  resolve()
+                })
               }
             }
             child.stdout?.on('data', (data) => {
@@ -407,6 +408,18 @@ export async function keepCoreAlive(): Promise<void> {
     }
   } catch (e) {
     showError(t('tray.coreStartError'), `${e}`)
+  }
+}
+
+async function syncCurrentAmneziaHelperAfterCoreStart(): Promise<void> {
+  try {
+    const { syncCurrentAmneziaHelperWithRuntimeMode } =
+      await import('../runtime/amnezia-helper-manager')
+    await syncCurrentAmneziaHelperWithRuntimeMode()
+  } catch (error) {
+    await writeFile(logPath(), `[Manager]: sync Amnezia helper failed, ${error}\n`, {
+      flag: 'a'
+    })
   }
 }
 

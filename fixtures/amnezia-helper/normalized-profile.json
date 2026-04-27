@@ -1,0 +1,41 @@
+{
+  "id": "amnezia-smoke-profile",
+  "name": "Amnezia Helper Smoke Profile",
+  "sourceId": "amnezia-smoke-source",
+  "protocol": "amneziawg",
+  "enabled": true,
+  "transport": {
+    "type": "udp",
+    "endpoint": {
+      "host": "vpn.example.com",
+      "port": 51820
+    },
+    "mtu": 1280
+  },
+  "auth": {
+    "clientPrivateKey": "smoke-client-private-key"
+  },
+  "interface": {
+    "addresses": ["10.8.0.2/32"],
+    "dns": ["1.1.1.1"],
+    "mtu": 1280
+  },
+  "peer": {
+    "endpoint": "vpn.example.com:51820",
+    "publicKey": "smoke-server-public-key",
+    "allowedIps": ["0.0.0.0/0", "::/0"],
+    "persistentKeepalive": 25
+  },
+  "amnezia": {
+    "container": "amnezia-awg",
+    "obfuscation": {
+      "smoke": "true"
+    }
+  },
+  "metadata": {
+    "importedAt": 1710000000000,
+    "decodedFormat": "json",
+    "sourceType": "amnezia_vpn_uri",
+    "warnings": ["smoke_fixture_not_real_credentials"]
+  }
+}

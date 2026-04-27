@@ -15,7 +15,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui
 import { cn } from '@renderer/lib/utils'
 import SettingItem from '../base/base-setting-item'
 import { Spinner } from '@renderer/components/ui/spinner'
-import { getFilePath, readTextFile, mihomoHotReloadConfig } from '@renderer/utils/ipc'
+import {
+  getFilePath,
+  readTextFile,
+  mihomoHotReloadConfig,
+  importAmneziaKey
+} from '@renderer/utils/ipc'
+import {
+  classifyProfileImportInput,
+  submitProfileImportInput
+} from '@renderer/utils/profile-import-input'
 import { useTranslation } from 'react-i18next'
 import {
   ClipboardPaste,
@@ -30,21 +39,13 @@ interface Props {
   item: ProfileItem
   isCurrent: boolean
   updateProfileItem: (item: ProfileItem) => Promise<void>
+  onImported?: () => void
   onClose: () => void
-}
-
-function isValidUrl(url: string): boolean {
-  try {
-    const u = new URL(url)
-    return u.protocol === 'http:' || u.protocol === 'https:'
-  } catch {
-    return false
-  }
 }
 
 const EditInfoModal: React.FC<Props> = (props) => {
   const { t } = useTranslation()
-  const { item, isCurrent, updateProfileItem, onClose } = props
+  const { item, isCurrent, updateProfileItem, onImported, onClose } = props
   const [values, setValues] = useState({ ...item, autoUpdate: item.autoUpdate ?? true })
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [urlTouched, setUrlTouched] = useState(false)
@@ -54,17 +55,29 @@ const EditInfoModal: React.FC<Props> = (props) => {
 
   const isNew = !item.id
   const isLocal = values.type === 'local'
-  const urlInvalid = !isLocal && urlTouched && !!values.url && !isValidUrl(values.url)
+  const importInput = classifyProfileImportInput(values.url || '')
+  const urlInvalid = !isLocal && urlTouched && !!values.url && importInput.kind === 'invalid'
 
-  const canImport = isNew
-    ? isLocal
-      ? !!values.file
-      : isValidUrl(values.url || '')
-    : true
+  const canImport = isNew ? (isLocal ? !!values.file : importInput.kind !== 'invalid') : true
 
   const onSave = async (): Promise<void> => {
     setSaving(true)
     try {
+      if (isNew && !isLocal) {
+        await submitProfileImportInput(values.url || '', {
+          importRemoteUrl: async (url) => {
+            await updateProfileItem({ ...values, type: 'remote', url })
+          },
+          importAmneziaKey: async (raw) => {
+            await importAmneziaKey(raw)
+            toast.success(t('pages.profiles.importAmneziaSuccess'))
+            onImported?.()
+          }
+        })
+        closeRef.current?.click()
+        return
+      }
+
       const itemToSave = { ...values }
       await updateProfileItem(itemToSave)
       if (item.id && isCurrent) {
@@ -139,10 +152,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
       }}
     >
       <DialogContent
-        className={cn(
-          'sm:max-w-none',
-          'w-120'
-        )}
+        className={cn('sm:max-w-none', 'w-120')}
         showCloseButton={false}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
@@ -194,7 +204,8 @@ const EditInfoModal: React.FC<Props> = (props) => {
                     data-guide="profile-import-url-input"
                     className={cn(
                       'h-9 pr-9',
-                      urlInvalid && 'border-destructive focus-visible:border-destructive focus-visible:ring-destructive/50'
+                      urlInvalid &&
+                        'border-destructive focus-visible:border-destructive focus-visible:ring-destructive/50'
                     )}
                     placeholder={t('profile.urlPlaceholder')}
                     value={values.url || ''}
@@ -221,7 +232,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
                   </Tooltip>
                 </div>
                 {urlInvalid && (
-                  <p className="text-xs text-destructive">{t('profile.invalidUrl')}</p>
+                  <p className="text-xs text-destructive">{t('profile.invalidImportSource')}</p>
                 )}
               </div>
             )}
@@ -396,9 +407,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
                               <MessageCircleQuestionMark className="text-lg" />
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent>
-                            {t('profile.updateIntervalLockedHelp')}
-                          </TooltipContent>
+                          <TooltipContent>{t('profile.updateIntervalLockedHelp')}</TooltipContent>
                         </Tooltip>
                       )
                     }
@@ -407,9 +416,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
                       type="number"
                       className="h-8 w-24"
                       value={values.interval?.toString() ?? ''}
-                      onChange={(e) =>
-                        setValues({ ...values, interval: parseInt(e.target.value) })
-                      }
+                      onChange={(e) => setValues({ ...values, interval: parseInt(e.target.value) })}
                       disabled={values.locked}
                     />
                   </SettingItem>

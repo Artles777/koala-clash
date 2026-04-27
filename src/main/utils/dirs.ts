@@ -1,7 +1,7 @@
 import { is } from '@electron-toolkit/utils'
 import { existsSync, mkdirSync, readdirSync } from 'fs'
 import { app } from 'electron'
-import path from 'path'
+import * as path from 'path'
 import { execSync } from 'child_process'
 import { getAppConfigSync } from '../config/app'
 import { checkCorePermissionSync } from '../core/manager'
@@ -90,7 +90,9 @@ export function mihomoCorePath(core: string): string {
   if (core === 'system') {
     const sysPath = systemCorePath()
     if (!sysPath || !existsSync(sysPath)) {
-      const errorMsg = sysPath ? `${t('error.systemCorePathInvalid')}: ${sysPath}` : t('error.systemCorePathNotSet')
+      const errorMsg = sysPath
+        ? `${t('error.systemCorePathInvalid')}: ${sysPath}`
+        : t('error.systemCorePathNotSet')
       throw new Error(errorMsg)
     }
     return sysPath
@@ -118,6 +120,18 @@ export function controledMihomoConfigPath(): string {
 
 export function profileConfigPath(): string {
   return path.join(dataDir(), 'profile.yaml')
+}
+
+export function importedSourcesPath(): string {
+  return path.join(dataDir(), 'imported-sources.yaml')
+}
+
+export function normalizedProfilesPath(): string {
+  return path.join(dataDir(), 'normalized-profiles.yaml')
+}
+
+export function amneziaHelperRulesPath(): string {
+  return path.join(dataDir(), 'amnezia-helper-rules.yaml')
 }
 
 export function profilesDir(): string {

@@ -1,5 +1,23 @@
 export { getAppConfig, patchAppConfig } from './app'
 export { getControledMihomoConfig, patchControledMihomoConfig } from './controledMihomo'
+export { importAmneziaKey, getAmneziaProfileDetails } from './amneziaImport'
+export {
+  getAmneziaHelperRules,
+  getAmneziaHelperRulePacks,
+  addAmneziaHelperRulePack,
+  updateAmneziaHelperRulePack,
+  addAmneziaHelperRule,
+  updateAmneziaHelperRule,
+  removeAmneziaHelperRule,
+  bulkAddAmneziaHelperRules,
+  exportAmneziaHelperRulePacks,
+  importAmneziaHelperRulePacks
+} from './amneziaHelperRules'
+export { evaluateAmneziaHelperRouting } from './amneziaHelperRoutingDiagnostics'
+export {
+  getAmneziaHelperSupportSnapshot,
+  exportAmneziaHelperDiagnosticsBundle
+} from './amneziaHelperSupport'
 export {
   getProfile,
   getCurrentProfileItem,

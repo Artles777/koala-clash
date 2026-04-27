@@ -5,16 +5,22 @@ import {
   getProfileStr,
   getAppConfig
 } from '../config'
-import {
-  mihomoProfileWorkDir,
-  mihomoWorkConfigPath,
-  mihomoWorkDir, rulePath
-} from '../utils/dirs'
+import { mihomoProfileWorkDir, mihomoWorkConfigPath, mihomoWorkDir, rulePath } from '../utils/dirs'
 import { parseYaml, stringifyYaml } from '../utils/yaml'
 import { copyFile, mkdir, readFile, writeFile } from 'fs/promises'
 import { deepMerge } from '../utils/merge'
 import { existsSync } from 'fs'
-import path from 'path'
+import * as path from 'path'
+import { injectAmneziaHelperRoutingTarget } from '../../core/routing/amnezia-helper-routing'
+import {
+  ensureAmneziaCompatibilityFallbackRule,
+  ensureAmneziaCompatibilityProxyGroup
+} from '../../core/routing/amnezia-compatibility-proxy-group'
+import { getActiveAmneziaHelperRoutingTarget } from '../runtime/amnezia-helper-routing-state'
+import { injectAmneziaHelperRules } from '../../core/routing/amnezia-helper-rules'
+import { getAmneziaHelperRules } from '../config/amneziaHelperRules'
+import { injectAmneziaHelperTunBypass } from '../../core/routing/amnezia-helper-tun-bypass'
+import { getActiveAmneziaHelperTunBypass } from '../runtime/amnezia-helper-tun-bypass-state'
 
 let runtimeConfigStr: string,
   rawProfileStr: string,
@@ -53,7 +59,11 @@ function processRulesWithOffset(ruleStrings: string[], currentRules: string[], i
 }
 
 export async function generateProfile(): Promise<void> {
-  const { current } = await getProfileConfig()
+  const profileConfig = await getProfileConfig()
+  const { current } = profileConfig
+  const currentProfileItem = profileConfig.items?.find((item) => item.id === current)
+  const currentIsAmneziaProfile =
+    currentProfileItem?.profileKind === 'amnezia' || currentProfileItem?.compatibility === 'amnezia'
   const appConfig = await getAppConfig()
   const {
     diffWorkDir = false,
@@ -129,7 +139,30 @@ export async function generateProfile(): Promise<void> {
     }
   }
 
-  const profile = deepMerge(JSON.parse(JSON.stringify(currentProfile)), configToMerge)
+  let profile = deepMerge(JSON.parse(JSON.stringify(currentProfile)), configToMerge)
+  if (currentIsAmneziaProfile) {
+    profile = ensureAmneziaCompatibilityProxyGroup(profile)
+  }
+  const helperRoutingResult = injectAmneziaHelperRoutingTarget(
+    profile,
+    getActiveAmneziaHelperRoutingTarget()
+  )
+  profile = helperRoutingResult.config as MihomoConfig
+  if (currentIsAmneziaProfile && helperRoutingResult.injected) {
+    profile = ensureAmneziaCompatibilityProxyGroup(profile, helperRoutingResult.target)
+  }
+  if (currentIsAmneziaProfile) {
+    profile = ensureAmneziaCompatibilityFallbackRule(profile, helperRoutingResult.target)
+  }
+  if (helperRoutingResult.injected) {
+    profile = injectAmneziaHelperRules(
+      profile,
+      helperRoutingResult.target,
+      await getAmneziaHelperRules()
+    ).config as MihomoConfig
+  }
+  profile = injectAmneziaHelperTunBypass(profile, getActiveAmneziaHelperTunBypass())
+    .config as MihomoConfig
 
   const tunEnabled = profile.tun?.enable ?? false
   if (!tunEnabled && !proxyModeEnabled) {

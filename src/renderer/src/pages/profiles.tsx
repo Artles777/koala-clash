@@ -28,7 +28,8 @@ const Profiles: React.FC = () => {
     addProfileItem,
     updateProfileItem,
     removeProfileItem,
-    changeCurrentProfile
+    changeCurrentProfile,
+    mutateProfileConfig
   } = useProfileConfig()
   const { current, items } = profileConfig || {}
   const itemsArray = items ?? emptyItems
@@ -159,10 +160,13 @@ const Profiles: React.FC = () => {
           <Button
             className="new-profile app-nodrag"
             variant="ghost"
-            size="icon-sm"
+            size="sm"
+            title={t('pages.profiles.importRemoteConfig')}
+            aria-label={t('pages.profiles.importRemoteConfig')}
             onClick={handleAddProfile}
           >
-            <Plus />
+            <Plus className="size-4" />
+            <span className="hidden sm:inline">{t('pages.profiles.importRemoteConfig')}</span>
           </Button>
           <Button
             size="icon-sm"
@@ -196,6 +200,10 @@ const Profiles: React.FC = () => {
           updateProfileItem={async (item: ProfileItem) => {
             await addProfileItem(item)
           }}
+          onImported={() => {
+            mutateProfileConfig()
+            window.electron.ipcRenderer.send('updateTrayMenu')
+          }}
           onClose={() => {
             setShowEditModal(false)
             setEditingItem(null)
@@ -218,7 +226,11 @@ const Profiles: React.FC = () => {
       {sortedItems.length === 0 ? (
         <div className="h-full w-full flex justify-center items-center">
           <div className="flex flex-col items-center gap-3">
-            <Button className="rounded-full w-20 h-20 hover:bg-card" variant="outline" onClick={handleAddProfile}>
+            <Button
+              className="rounded-full w-20 h-20 hover:bg-card"
+              variant="outline"
+              onClick={handleAddProfile}
+            >
               <Plus className="text-muted-foreground size-10" />
             </Button>
             <h2 className="text-muted-foreground text-lg font-medium">

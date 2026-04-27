@@ -21,7 +21,7 @@ import {
 import { stringifyYaml } from './yaml'
 import { mkdir, writeFile, cp, rm, readdir } from 'fs/promises'
 import { existsSync } from 'fs'
-import path from 'path'
+import * as path from 'path'
 import {
   startPacServer
 } from '../resolve/server'

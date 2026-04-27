@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import os from 'os'
+import * as os from 'os'
 import { execSync } from 'child_process'
 
 let cachedHWID: string | null = null

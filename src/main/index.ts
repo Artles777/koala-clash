@@ -1,9 +1,19 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { registerIpcMainHandlers } from './utils/ipc'
 import windowStateKeeper from 'electron-window-state'
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, powerMonitor, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  Notification,
+  powerMonitor,
+  shell
+} from 'electron'
 import { addProfileItem, getAppConfig, patchControledMihomoConfig } from './config'
 import { quitWithoutCore, startCore, stopCore } from './core/manager'
+import { stopAllAmneziaHelpers } from './runtime/amnezia-helper-manager'
 import { triggerSysProxy } from './sys/sysproxy'
 import icon from '../../resources/icon.png?asset'
 import { createTray } from './resolve/tray'
@@ -19,7 +29,6 @@ import { exePath, taskDir } from './utils/dirs'
 import { showFloatingWindow } from './resolve/floatingWindow'
 import { getAppConfigSync } from './config/app'
 import { t } from './utils/i18n'
-
 
 let quitTimeout: NodeJS.Timeout | null = null
 export let mainWindow: BrowserWindow | null = null
@@ -232,6 +241,7 @@ app.on('before-quit', async (e) => {
         quitTimeout = null
       }
       triggerSysProxy(false, false)
+      await stopAllAmneziaHelpers()
       await stopCore()
       app.exit()
       return
@@ -247,6 +257,7 @@ app.on('before-quit', async (e) => {
         quitTimeout = null
       }
       triggerSysProxy(false, false)
+      await stopAllAmneziaHelpers()
       await stopCore()
       app.exit()
     }
@@ -257,6 +268,7 @@ app.on('before-quit', async (e) => {
       quitTimeout = null
     }
     triggerSysProxy(false, false)
+    await stopAllAmneziaHelpers()
     await stopCore()
     app.exit()
   }
@@ -268,6 +280,7 @@ powerMonitor.on('shutdown', async () => {
     quitTimeout = null
   }
   triggerSysProxy(false, false)
+  await stopAllAmneziaHelpers()
   await stopCore()
   app.exit()
 })
