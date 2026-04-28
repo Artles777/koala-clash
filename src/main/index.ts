@@ -33,6 +33,9 @@ import { t } from './utils/i18n'
 let quitTimeout: NodeJS.Timeout | null = null
 export let mainWindow: BrowserWindow | null = null
 export let needsFirstRunAdmin = false
+const appDisplayName = 'Koala Clash'
+
+app.setName(appDisplayName)
 
 /**
  * Show error to the user via renderer toast notification.

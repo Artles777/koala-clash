@@ -7,12 +7,13 @@ import {
 } from '../src/core/routing/amnezia-helper-tun-rule-reliability'
 import { ensureAmneziaTunRuntimeCompatibility } from '../src/core/routing/amnezia-tun-runtime-compatibility'
 
+type TunCompatibilityConfig = Parameters<typeof ensureAmneziaTunRuntimeCompatibility>[0]
+
 describe('Amnezia TUN runtime compatibility', () => {
   it('does not patch non-TUN configs', () => {
-    const config = {
-      tun: { enable: false },
-      rules: ['DOMAIN-SUFFIX,linkedin.com,PROXY']
-    } as unknown as Partial<MihomoConfig>
+    const config: TunCompatibilityConfig = {
+      tun: { enable: false }
+    }
 
     const result = ensureAmneziaTunRuntimeCompatibility(config)
 
@@ -22,10 +23,10 @@ describe('Amnezia TUN runtime compatibility', () => {
   })
 
   it('adds DNS hijack, Mihomo DNS, and sniffer for Amnezia TUN runtime configs', () => {
-    const result = ensureAmneziaTunRuntimeCompatibility({
-      tun: { enable: true },
-      rules: ['DOMAIN-SUFFIX,linkedin.com,PROXY', 'MATCH,DIRECT']
-    } as unknown as Partial<MihomoConfig>)
+    const config: TunCompatibilityConfig = {
+      tun: { enable: true }
+    }
+    const result = ensureAmneziaTunRuntimeCompatibility(config)
 
     assert.equal(result.applied, true)
     assert.deepEqual(result.config.tun?.['dns-hijack'], ['any:53'])
@@ -43,11 +44,11 @@ describe('Amnezia TUN runtime compatibility', () => {
   })
 
   it('keeps Amnezia TUN IPv4-only when global IPv6 is disabled', () => {
-    const result = ensureAmneziaTunRuntimeCompatibility({
+    const config: TunCompatibilityConfig = {
       ipv6: false,
-      tun: { enable: true },
-      rules: ['PROCESS-NAME,Telegram,DIRECT']
-    } as unknown as Partial<MihomoConfig>)
+      tun: { enable: true }
+    }
+    const result = ensureAmneziaTunRuntimeCompatibility(config)
 
     assert.equal(result.applied, true)
     assert.deepEqual(result.config.tun?.['inet6-address'], [])
@@ -73,7 +74,7 @@ describe('Amnezia TUN runtime compatibility', () => {
           TLS: { ports: [8443] }
         }
       }
-    } as Partial<MihomoConfig>)
+    } as TunCompatibilityConfig)
 
     assert.deepEqual(result.config.tun?.['dns-hijack'], ['198.18.0.2:53'])
     assert.equal(result.config.dns?.['enhanced-mode'], 'redir-host')
@@ -84,7 +85,7 @@ describe('Amnezia TUN runtime compatibility', () => {
   it('makes domain helper rules reliable under TUN for the generated runtime state', () => {
     const result = ensureAmneziaTunRuntimeCompatibility({
       tun: { enable: true }
-    } as Partial<MihomoConfig>)
+    } as TunCompatibilityConfig)
     const state = readAmneziaHelperTunDnsRuntimeState(result.config)
     const reliability = evaluateAmneziaHelperTunRuleReliability({
       ...state,

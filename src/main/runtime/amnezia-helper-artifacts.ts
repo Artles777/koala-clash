@@ -109,6 +109,10 @@ const supportedArchitectures: AmneziaHelperArtifactArch[] = ['x64', 'arm64']
 const defaultSourceRoot = 'helper-artifacts'
 const defaultStagingRoot = path.join('extra', 'files')
 const defaultManifestName = 'manifest.json'
+const packagedSupportScripts = [
+  'amnezia-helper-proxy-backend.cjs',
+  'amnezia-helper-stub.cjs'
+] as const
 
 export function allAmneziaHelperArtifactTargets(): AmneziaHelperArtifactTarget[] {
   return supportedPlatforms.flatMap((platform) =>
@@ -286,6 +290,7 @@ export async function prepareAmneziaHelperArtifacts(
     report.artifacts.push(record)
   }
 
+  await stagePackagedSupportScripts(stagingRoot)
   await writeArtifactManifest(report)
   return finalizeArtifactReport(report)
 }
@@ -514,6 +519,15 @@ async function copyManifestIfPresent(sourcePath: string, stagedPath: string): Pr
   const sourceManifestPath = `${sourcePath}.json`
   if (!existsSync(sourceManifestPath)) return
   await copyFile(sourceManifestPath, `${stagedPath}.json`)
+}
+
+async function stagePackagedSupportScripts(stagingRoot: string): Promise<void> {
+  await mkdir(stagingRoot, { recursive: true })
+  for (const filename of packagedSupportScripts) {
+    const sourcePath = path.resolve('src', 'main', 'runtime', filename)
+    if (!existsSync(sourcePath)) continue
+    await copyFile(sourcePath, path.join(stagingRoot, filename))
+  }
 }
 
 async function checksumFile(filePath: string): Promise<string> {
