@@ -33,6 +33,21 @@ export interface WindowsNativeProcessBypassPrerequisites {
   issues: LinuxNativeProcessBypassIssue[]
 }
 
+export interface MacosNativeProcessBypassPrerequisites {
+  platform: string
+  status: LinuxNativeProcessBypassPrerequisiteStatus
+  controllerAvailable: boolean
+  controllerCommand: string
+  entitlementsPresent: boolean
+  extensionInstalled: boolean
+  userApprovalRequired: boolean
+  dataPlaneActive: boolean
+  fallbackOnly: boolean
+  reasonCode?: LinuxNativeProcessBypassIssueCode
+  diagnostics: string[]
+  issues: LinuxNativeProcessBypassIssue[]
+}
+
 export interface NativeProcessBypassOptions {
   enabled?: boolean
   platform?: string
@@ -47,6 +62,9 @@ export interface NativeProcessBypassOptions {
   windowsControllerCommand?: string
   windowsSessionId?: string
   windowsController?: WindowsNativeProcessBypassController
+  macosControllerCommand?: string
+  macosSessionId?: string
+  macosController?: MacosNativeProcessBypassController
 }
 
 export interface NativeProcessBypassCommandPlan {
@@ -96,6 +114,38 @@ export interface WindowsNativeProcessBypassController {
   ): Promise<WindowsNativeProcessBypassControllerResult>
 }
 
+export interface MacosNativeProcessBypassControllerInput {
+  sessionId: string
+  processNames: string[]
+}
+
+export interface MacosNativeProcessBypassControllerResult {
+  ok: boolean
+  available: boolean
+  entitlementsPresent: boolean
+  extensionInstalled: boolean
+  userApprovalRequired: boolean
+  dataPlaneActive: boolean
+  fallbackOnly: boolean
+  activeSessionId?: string
+  appliedProcessNames?: string[]
+  diagnostics?: string[]
+  reasonCode?: LinuxNativeProcessBypassIssueCode
+  message?: string
+  provider?: string
+  providerBundleIdentifier?: string
+}
+
+export interface MacosNativeProcessBypassController {
+  status(): Promise<MacosNativeProcessBypassControllerResult>
+  apply(
+    input: MacosNativeProcessBypassControllerInput
+  ): Promise<MacosNativeProcessBypassControllerResult>
+  cleanup(
+    input: MacosNativeProcessBypassControllerInput
+  ): Promise<MacosNativeProcessBypassControllerResult>
+}
+
 interface AppliedNativeProcessBypassState {
   processNames: string[]
   boundPids: number[]
@@ -115,10 +165,19 @@ interface AppliedWindowsNativeProcessBypassState {
   controllerCommand: string
 }
 
+interface AppliedMacosNativeProcessBypassState {
+  sessionId: string
+  processNames: string[]
+  appliedAt: number
+  controllerCommand: string
+}
+
 const linuxMechanism: NativeProcessBypassMechanism = 'linux-cgroup-fwmark'
 const windowsMechanism: NativeProcessBypassMechanism = 'windows-wfp-service'
+const macosMechanism: NativeProcessBypassMechanism = 'macos-transparent-proxy-system-extension'
 const windowsServiceName = 'KoalaProcessBypass'
 const windowsControllerCommand = 'koala-process-bypassctl.exe'
+const macosControllerCommand = 'koala-macos-process-bypassctl'
 const tableName = 'koala_process_bypass'
 const chainName = 'output'
 const cgroupName = 'koala-clash-bypass'
@@ -133,6 +192,7 @@ const execFile = promisify(nodeExecFile)
 let currentStatus: NativeProcessBypassCapability | undefined
 let appliedState: AppliedNativeProcessBypassState | undefined
 let windowsAppliedState: AppliedWindowsNativeProcessBypassState | undefined
+let macosAppliedState: AppliedMacosNativeProcessBypassState | undefined
 let reconcileTimer: ReturnType<typeof setInterval> | undefined
 
 export function canUseNativeProcessBypass(
@@ -149,15 +209,23 @@ export function canUseNativeProcessBypass(
       supportedOnPlatform: false,
       active: false,
       status: 'unsupported',
+      mechanism: macosMechanism,
       platformMode: 'macos_fallback_only',
       nativeDataPlaneActive: false,
       fallbackOnly: true,
       fallbackReason: 'macos_native_process_bypass_unsupported',
       diagnosticsReason: 'macos_native_process_bypass_unsupported',
       diagnostics: [
-        'macOS native PROCESS-NAME bypass is not supported in the current architecture.',
+        'macOS native PROCESS-NAME bypass is control-plane only until a signed Network/System Extension reports an active data plane.',
         'macOS uses address-based DIRECT excludes and learned process-to-IP bypass fallback only.'
       ],
+      macosControllerAvailable: false,
+      macosEntitlementsPresent: false,
+      macosExtensionInstalled: false,
+      macosUserApprovalRequired: true,
+      macosReasonCode: 'macos_data_plane_pending',
+      macosProvider: 'NETransparentProxyProvider',
+      macosProviderBundleIdentifier: 'com.koalaclash.processbypass.transparent-proxy',
       activeProcesses: []
     })
   }
@@ -395,10 +463,319 @@ export async function detectWindowsNativeProcessBypassPrerequisites(
   }
 }
 
+export async function detectMacosNativeProcessBypassPrerequisites(
+  options: NativeProcessBypassOptions = {}
+): Promise<MacosNativeProcessBypassPrerequisites> {
+  const platform = options.platform ?? process.platform
+  const executor = options.executor ?? defaultExecutor
+  const controllerCommand = options.macosControllerCommand ?? macosControllerCommand
+  const issues: LinuxNativeProcessBypassIssue[] = []
+
+  if (platform !== 'darwin') {
+    return {
+      platform,
+      status: 'not_macos',
+      controllerAvailable: false,
+      controllerCommand,
+      entitlementsPresent: false,
+      extensionInstalled: false,
+      userApprovalRequired: false,
+      dataPlaneActive: false,
+      fallbackOnly: true,
+      diagnostics: [],
+      issues: [
+        {
+          code: 'not_macos',
+          message: 'macOS native process bypass scaffold is macOS-only.'
+        }
+      ]
+    }
+  }
+
+  const controllerAvailable =
+    options.macosController !== undefined ||
+    (await macosControllerAvailable(executor, controllerCommand))
+  if (!controllerAvailable) {
+    issues.push({
+      code: 'macos_controller_missing',
+      message: `macOS process bypass controller ${controllerCommand} is not available.`
+    })
+    return {
+      platform,
+      status: 'macos_controller_missing',
+      controllerAvailable: false,
+      controllerCommand,
+      entitlementsPresent: false,
+      extensionInstalled: false,
+      userApprovalRequired: true,
+      dataPlaneActive: false,
+      fallbackOnly: true,
+      reasonCode: 'macos_controller_missing',
+      diagnostics: [],
+      issues
+    }
+  }
+
+  try {
+    const controller =
+      options.macosController ??
+      createMacosNativeProcessBypassController({
+        executor,
+        command: controllerCommand
+      })
+    const status = await controller.status()
+    if (!status.entitlementsPresent) {
+      issues.push({
+        code: 'macos_entitlements_missing',
+        message: 'macOS process bypass Network/System Extension entitlements are not present.'
+      })
+    }
+    if (!status.extensionInstalled) {
+      issues.push({
+        code: 'macos_extension_not_installed',
+        message: 'macOS process bypass System Extension is not installed.'
+      })
+    }
+    if (status.userApprovalRequired) {
+      issues.push({
+        code: 'macos_user_approval_required',
+        message: 'macOS process bypass System Extension requires user approval.'
+      })
+    }
+
+    const statusCode: LinuxNativeProcessBypassPrerequisiteStatus =
+      status.dataPlaneActive && !status.fallbackOnly
+        ? 'supported'
+        : status.userApprovalRequired
+          ? 'macos_user_approval_required'
+          : status.extensionInstalled && status.entitlementsPresent
+            ? 'implementation_pending'
+            : 'missing_prerequisites'
+
+    return {
+      platform,
+      status: statusCode,
+      controllerAvailable: true,
+      controllerCommand,
+      entitlementsPresent: status.entitlementsPresent,
+      extensionInstalled: status.extensionInstalled,
+      userApprovalRequired: status.userApprovalRequired,
+      dataPlaneActive: status.dataPlaneActive,
+      fallbackOnly: status.fallbackOnly,
+      reasonCode: status.reasonCode,
+      diagnostics: status.diagnostics ?? [],
+      issues
+    }
+  } catch (error) {
+    const issue = createIssue('macos_apply_failed', `macOS controller status failed: ${error}`)
+    return {
+      platform,
+      status: 'missing_prerequisites',
+      controllerAvailable: true,
+      controllerCommand,
+      entitlementsPresent: false,
+      extensionInstalled: false,
+      userApprovalRequired: true,
+      dataPlaneActive: false,
+      fallbackOnly: true,
+      reasonCode: issue.code,
+      diagnostics: [`${issue.code}: ${issue.message}`],
+      issues: [issue]
+    }
+  }
+}
+
 export async function startNativeProcessBypass(
   options: NativeProcessBypassOptions = {}
 ): Promise<NativeProcessBypassCapability> {
   const base = canUseNativeProcessBypass(options)
+  if (base.platform === 'darwin' && base.enabled) {
+    await cleanupLinuxNativeProcessBypass(options)
+    await cleanupWindowsNativeProcessBypass(options)
+    await cleanupMacosNativeProcessBypass(options)
+    const processNames = normalizeProcessNames(
+      options.processNames ?? options.activeProcesses ?? []
+    )
+    const prerequisites = await detectMacosNativeProcessBypassPrerequisites(options)
+    const prerequisiteDiagnostics = prerequisites.issues.map(
+      (issue) => `${issue.code}: ${issue.message}`
+    )
+    const prerequisiteFields = {
+      prerequisiteStatus: prerequisites.status,
+      prerequisiteIssues: prerequisites.issues,
+      mechanism: macosMechanism,
+      platformMode: prerequisites.controllerAvailable
+        ? ('macos_transparent_proxy' as const)
+        : ('macos_fallback_only' as const),
+      nativeDataPlaneActive: prerequisites.dataPlaneActive,
+      fallbackOnly: prerequisites.fallbackOnly,
+      fallbackReason:
+        prerequisites.reasonCode ??
+        (prerequisites.controllerAvailable
+          ? 'macos_data_plane_pending'
+          : 'macos_controller_missing'),
+      macosControllerAvailable: prerequisites.controllerAvailable,
+      macosEntitlementsPresent: prerequisites.entitlementsPresent,
+      macosExtensionInstalled: prerequisites.extensionInstalled,
+      macosUserApprovalRequired: prerequisites.userApprovalRequired,
+      macosReasonCode:
+        prerequisites.reasonCode ??
+        (prerequisites.controllerAvailable
+          ? 'macos_data_plane_pending'
+          : 'macos_controller_missing'),
+      macosProvider: 'NETransparentProxyProvider',
+      macosProviderBundleIdentifier: 'com.koalaclash.processbypass.transparent-proxy'
+    }
+
+    if (processNames.length === 0) {
+      currentStatus = createCapability({
+        ...base,
+        ...prerequisiteFields,
+        active: false,
+        status: prerequisites.controllerAvailable ? 'available' : 'unsupported',
+        diagnosticsReason: 'no_process_names',
+        diagnostics: [
+          ...base.diagnostics,
+          ...prerequisites.diagnostics,
+          ...prerequisiteDiagnostics,
+          'No PROCESS-NAME DIRECT rules are eligible for macOS native bypass.'
+        ]
+      })
+      return cloneCapability(currentStatus)
+    }
+
+    if (!prerequisites.controllerAvailable) {
+      currentStatus = createCapability({
+        ...base,
+        ...prerequisiteFields,
+        active: false,
+        status: 'unsupported',
+        diagnosticsReason: 'macos_controller_missing',
+        diagnostics: [...base.diagnostics, ...prerequisiteDiagnostics]
+      })
+      return cloneCapability(currentStatus)
+    }
+
+    try {
+      const controller =
+        options.macosController ??
+        createMacosNativeProcessBypassController({
+          executor: options.executor ?? defaultExecutor,
+          command: prerequisites.controllerCommand
+        })
+      const sessionId = options.macosSessionId ?? createNativeProcessBypassSessionId()
+      const result = await controller.apply({
+        sessionId,
+        processNames
+      })
+      const appliedProcessNames = normalizeProcessNames(
+        result.appliedProcessNames && result.appliedProcessNames.length > 0
+          ? result.appliedProcessNames
+          : processNames
+      )
+      const active =
+        result.ok === true &&
+        result.available === true &&
+        result.dataPlaneActive === true &&
+        result.fallbackOnly === false &&
+        appliedProcessNames.length > 0
+      const diagnostics = [
+        ...base.diagnostics,
+        ...prerequisites.diagnostics,
+        ...prerequisiteDiagnostics,
+        ...(result.diagnostics ?? []),
+        ...(result.message ? [result.message] : [])
+      ]
+
+      if (!active) {
+        currentStatus = createCapability({
+          ...base,
+          ...prerequisiteFields,
+          active: false,
+          status:
+            result.userApprovalRequired || !result.extensionInstalled || !result.entitlementsPresent
+              ? 'blocked'
+              : 'available',
+          diagnosticsReason:
+            result.reasonCode ??
+            (result.fallbackOnly ? 'macos_data_plane_pending' : 'macos_apply_failed'),
+          diagnostics,
+          nativeDataPlaneActive: false,
+          fallbackOnly: true,
+          fallbackReason:
+            result.reasonCode ??
+            (result.fallbackOnly ? 'macos_data_plane_pending' : 'macos_apply_failed'),
+          macosControllerAvailable: true,
+          macosEntitlementsPresent: result.entitlementsPresent,
+          macosExtensionInstalled: result.extensionInstalled,
+          macosUserApprovalRequired: result.userApprovalRequired,
+          macosReasonCode: result.reasonCode,
+          macosProvider: result.provider ?? prerequisiteFields.macosProvider,
+          macosProviderBundleIdentifier:
+            result.providerBundleIdentifier ?? prerequisiteFields.macosProviderBundleIdentifier,
+          macosSessionId: sessionId,
+          macosAppliedProcessCount: 0
+        })
+        return cloneCapability(currentStatus)
+      }
+
+      const appliedAt = options.now?.() ?? Date.now()
+      macosAppliedState = {
+        sessionId,
+        processNames: appliedProcessNames,
+        appliedAt,
+        controllerCommand: prerequisites.controllerCommand
+      }
+      currentStatus = createCapability({
+        ...base,
+        ...prerequisiteFields,
+        supportedOnPlatform: true,
+        active: true,
+        status: 'active',
+        diagnosticsReason: 'macos_data_plane_active',
+        diagnostics: [
+          `macOS native process bypass applied for ${appliedProcessNames.length} process name(s).`,
+          ...diagnostics
+        ],
+        nativeDataPlaneActive: true,
+        fallbackOnly: false,
+        fallbackReason: undefined,
+        activeProcesses: appliedProcessNames,
+        appliedAt,
+        macosControllerAvailable: true,
+        macosEntitlementsPresent: result.entitlementsPresent,
+        macosExtensionInstalled: result.extensionInstalled,
+        macosUserApprovalRequired: result.userApprovalRequired,
+        macosReasonCode: result.reasonCode ?? 'macos_data_plane_active',
+        macosProvider: result.provider ?? prerequisiteFields.macosProvider,
+        macosProviderBundleIdentifier:
+          result.providerBundleIdentifier ?? prerequisiteFields.macosProviderBundleIdentifier,
+        macosSessionId: sessionId,
+        macosAppliedProcessCount: appliedProcessNames.length
+      })
+      return cloneCapability(currentStatus)
+    } catch (error) {
+      const issue = createIssue('macos_apply_failed', String(error))
+      currentStatus = createCapability({
+        ...base,
+        ...prerequisiteFields,
+        active: false,
+        status: 'blocked',
+        diagnosticsReason: issue.code,
+        diagnostics: [
+          ...base.diagnostics,
+          ...prerequisites.diagnostics,
+          ...prerequisiteDiagnostics,
+          `${issue.code}: ${issue.message}`
+        ],
+        nativeDataPlaneActive: false,
+        fallbackOnly: true,
+        fallbackReason: issue.code
+      })
+      return cloneCapability(currentStatus)
+    }
+  }
+
   if (base.platform === 'win32' && base.enabled) {
     await cleanupLinuxNativeProcessBypass(options)
     await cleanupWindowsNativeProcessBypass(options)
@@ -449,7 +826,7 @@ export async function startNativeProcessBypass(
           executor: options.executor ?? defaultExecutor,
           command: prerequisites.controllerCommand
         })
-      const sessionId = options.windowsSessionId ?? createWindowsNativeProcessBypassSessionId()
+      const sessionId = options.windowsSessionId ?? createNativeProcessBypassSessionId()
       const result = await controller.apply({
         sessionId,
         processNames,
@@ -651,10 +1028,15 @@ export async function stopNativeProcessBypass(
           ...options,
           activeProcesses: previous?.activeProcesses
         })
-      : await cleanupLinuxNativeProcessBypass({
-          ...options,
-          activeProcesses: previous?.activeProcesses
-        })
+      : previousPlatform === 'darwin'
+        ? await cleanupMacosNativeProcessBypass({
+            ...options,
+            activeProcesses: previous?.activeProcesses
+          })
+        : await cleanupLinuxNativeProcessBypass({
+            ...options,
+            activeProcesses: previous?.activeProcesses
+          })
   currentStatus = canUseNativeProcessBypass({
     enabled: previous?.enabled ?? options.enabled ?? false,
     platform: previousPlatform
@@ -975,6 +1357,47 @@ async function cleanupWindowsNativeProcessBypass(
   }
 }
 
+async function cleanupMacosNativeProcessBypass(
+  options: NativeProcessBypassOptions
+): Promise<{ ok: boolean; diagnostics: string[]; issues: LinuxNativeProcessBypassIssue[] }> {
+  const platform = options.platform ?? process.platform
+  if (platform !== 'darwin' || !macosAppliedState) {
+    macosAppliedState = undefined
+    return { ok: true, diagnostics: [], issues: [] }
+  }
+
+  const state = macosAppliedState
+  const controller =
+    options.macosController ??
+    createMacosNativeProcessBypassController({
+      executor: options.executor ?? defaultExecutor,
+      command: options.macosControllerCommand ?? state.controllerCommand
+    })
+
+  try {
+    const result = await controller.cleanup({
+      sessionId: state.sessionId,
+      processNames: state.processNames
+    })
+    if (!result.ok) {
+      const issue = createIssue(
+        result.reasonCode ?? 'macos_cleanup_failed',
+        result.message ?? 'macOS process bypass controller cleanup failed.'
+      )
+      return {
+        ok: false,
+        diagnostics: [...(result.diagnostics ?? []), `${issue.code}: ${issue.message}`],
+        issues: [issue]
+      }
+    }
+    macosAppliedState = undefined
+    return { ok: true, diagnostics: result.diagnostics ?? [], issues: [] }
+  } catch (error) {
+    const issue = createIssue('macos_cleanup_failed', String(error))
+    return { ok: false, diagnostics: [`${issue.code}: ${issue.message}`], issues: [issue] }
+  }
+}
+
 async function bindPidToBypassCgroup(
   pid: number,
   paths: LinuxNativeProcessBypassPaths
@@ -1087,6 +1510,18 @@ async function windowsControllerAvailable(
   }
 }
 
+async function macosControllerAvailable(
+  executor: NativeProcessBypassExecutor,
+  command: string
+): Promise<boolean> {
+  try {
+    await executor.run('sh', ['-c', `command -v ${shellQuote(command)}`])
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function windowsAdministratorAvailable(
   executor: NativeProcessBypassExecutor
 ): Promise<boolean> {
@@ -1110,6 +1545,76 @@ async function windowsWfpServiceAvailable(executor: NativeProcessBypassExecutor)
     return true
   } catch {
     return false
+  }
+}
+
+function createMacosNativeProcessBypassController(input: {
+  executor: NativeProcessBypassExecutor
+  command: string
+}): MacosNativeProcessBypassController {
+  return {
+    async status() {
+      const result = await input.executor.run(input.command, ['status', '--json'])
+      return parseMacosControllerResult(result.stdout, 'macos_apply_failed')
+    },
+    async apply(request) {
+      const args = buildMacosControllerArgs('apply', request)
+      const result = await input.executor.run(input.command, args)
+      return parseMacosControllerResult(result.stdout, 'macos_apply_failed')
+    },
+    async cleanup(request) {
+      const args = buildMacosControllerArgs('cleanup', request)
+      const result = await input.executor.run(input.command, args)
+      return parseMacosControllerResult(result.stdout, 'macos_cleanup_failed')
+    }
+  }
+}
+
+function buildMacosControllerArgs(
+  action: 'apply' | 'cleanup',
+  input: MacosNativeProcessBypassControllerInput
+): string[] {
+  const args = [action, '--session', input.sessionId, '--json']
+  for (const processName of normalizeProcessNames(input.processNames)) {
+    args.push('--process-name', processName)
+  }
+  return args
+}
+
+function parseMacosControllerResult(
+  stdout: string,
+  fallbackReasonCode: LinuxNativeProcessBypassIssueCode
+): MacosNativeProcessBypassControllerResult {
+  const parsed = parseControllerJsonLine(stdout, fallbackReasonCode, 'macOS process bypass')
+  const reasonCode =
+    typeof parsed.reasonCode === 'string'
+      ? toNativeBypassIssueCode(parsed.reasonCode, fallbackReasonCode)
+      : undefined
+  return {
+    ok: parsed.ok === true,
+    available: parsed.available === true,
+    entitlementsPresent: parsed.entitlementsPresent === true,
+    extensionInstalled: parsed.extensionInstalled === true,
+    userApprovalRequired: parsed.userApprovalRequired === true,
+    dataPlaneActive: parsed.dataPlaneActive === true || parsed.active === true,
+    fallbackOnly: parsed.fallbackOnly !== false,
+    activeSessionId:
+      typeof parsed.activeSessionId === 'string' ? parsed.activeSessionId : undefined,
+    appliedProcessNames: Array.isArray(parsed.appliedProcessNames)
+      ? parsed.appliedProcessNames.filter((name): name is string => typeof name === 'string')
+      : undefined,
+    diagnostics: Array.isArray(parsed.diagnostics)
+      ? parsed.diagnostics.filter(
+          (diagnostic): diagnostic is string => typeof diagnostic === 'string'
+        )
+      : undefined,
+    reasonCode,
+    message: typeof parsed.message === 'string' ? parsed.message : undefined,
+    provider: typeof parsed.provider === 'string' ? parsed.provider : undefined,
+    providerBundleIdentifier:
+      typeof parsed.providerBundleIdentifier === 'string'
+        ? parsed.providerBundleIdentifier
+        : undefined
   }
 }
 
@@ -1146,19 +1651,7 @@ function parseWindowsControllerResult(
   stdout: string,
   fallbackReasonCode: LinuxNativeProcessBypassIssueCode
 ): WindowsNativeProcessBypassControllerResult {
-  const line = stdout
-    .split(/\r?\n/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.startsWith('{') && entry.endsWith('}'))
-    .reverse()[0]
-  if (!line) {
-    throw createNativeBypassError(
-      fallbackReasonCode,
-      'Windows WFP controller did not return a JSON result.'
-    )
-  }
-
-  const parsed = JSON.parse(line) as Record<string, unknown>
+  const parsed = parseControllerJsonLine(stdout, fallbackReasonCode, 'Windows WFP')
   const reasonCode =
     typeof parsed.reasonCode === 'string'
       ? toNativeBypassIssueCode(parsed.reasonCode, fallbackReasonCode)
@@ -1179,8 +1672,32 @@ function parseWindowsControllerResult(
   }
 }
 
-function createWindowsNativeProcessBypassSessionId(): string {
+function parseControllerJsonLine(
+  stdout: string,
+  fallbackReasonCode: LinuxNativeProcessBypassIssueCode,
+  controllerLabel: string
+): Record<string, unknown> {
+  const line = stdout
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.startsWith('{') && entry.endsWith('}'))
+    .reverse()[0]
+  if (!line) {
+    throw createNativeBypassError(
+      fallbackReasonCode,
+      `${controllerLabel} controller did not return a JSON result.`
+    )
+  }
+
+  return JSON.parse(line) as Record<string, unknown>
+}
+
+function createNativeProcessBypassSessionId(): string {
   return `koala-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`
 }
 
 async function exists(filePath: string): Promise<boolean> {
@@ -1259,6 +1776,15 @@ function createCapability(
         | 'windowsControllerAvailable'
         | 'windowsSessionId'
         | 'windowsAppliedProcessCount'
+        | 'macosControllerAvailable'
+        | 'macosEntitlementsPresent'
+        | 'macosExtensionInstalled'
+        | 'macosUserApprovalRequired'
+        | 'macosReasonCode'
+        | 'macosProvider'
+        | 'macosProviderBundleIdentifier'
+        | 'macosSessionId'
+        | 'macosAppliedProcessCount'
       >
     >
 ): NativeProcessBypassCapability {
@@ -1311,6 +1837,7 @@ function toNativeBypassIssueCode(
   switch (code) {
     case 'not_linux':
     case 'not_windows':
+    case 'not_macos':
     case 'cgroup_v2_missing':
     case 'nft_missing':
     case 'ip_missing':
@@ -1323,6 +1850,15 @@ function toNativeBypassIssueCode(
     case 'windows_data_plane_inactive':
     case 'windows_apply_failed':
     case 'windows_cleanup_failed':
+    case 'macos_controller_missing':
+    case 'macos_entitlements_missing':
+    case 'macos_extension_not_installed':
+    case 'macos_user_approval_required':
+    case 'macos_data_plane_pending':
+    case 'macos_data_plane_active':
+    case 'macos_apply_failed':
+    case 'macos_cleanup_failed':
+    case 'macos_cleanup_complete':
     case 'macos_native_bypass_unsupported':
     case 'no_process_names':
     case 'no_matching_processes':

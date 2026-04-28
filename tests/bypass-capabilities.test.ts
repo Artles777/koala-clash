@@ -13,6 +13,7 @@ import {
   buildLinuxNativeProcessBypassCommands,
   canUseNativeProcessBypass,
   detectLinuxNativeProcessBypassPrerequisites,
+  detectMacosNativeProcessBypassPrerequisites,
   detectWindowsNativeProcessBypassPrerequisites,
   getLinuxNativeProcessBypassPlan,
   getNativeProcessBypassStatus,
@@ -222,6 +223,79 @@ describe('Linux native process bypass MVP', () => {
     assert.equal(capability.platformMode, 'windows_wfp_service')
     assert.equal(capability.nativeDataPlaneActive, false)
     assert.equal(capability.diagnosticsReason, 'windows_wfp_service_pending_apply')
+  })
+
+  it('detects macOS controller status without claiming true bypass', async () => {
+    const executor = createMockExecutor({
+      availableCommands: ['koala-macos-process-bypassctl']
+    })
+    const prerequisites = await detectMacosNativeProcessBypassPrerequisites({
+      enabled: true,
+      platform: 'darwin',
+      executor
+    })
+
+    assert.equal(prerequisites.controllerAvailable, true)
+    assert.equal(prerequisites.dataPlaneActive, false)
+    assert.equal(prerequisites.fallbackOnly, true)
+    assert.equal(prerequisites.status, 'macos_user_approval_required')
+    assert.ok(prerequisites.issues.some((issue) => issue.code === 'macos_user_approval_required'))
+  })
+
+  it('keeps macOS native controller integration fallback-only without active data plane', async () => {
+    const executor = createMockExecutor({
+      availableCommands: ['koala-macos-process-bypassctl']
+    })
+    const capability = await startNativeProcessBypass({
+      enabled: true,
+      platform: 'darwin',
+      processNames: ['Telegram'],
+      executor,
+      macosSessionId: 'mac-session'
+    })
+
+    assert.equal(capability.active, false)
+    assert.equal(capability.nativeDataPlaneActive, false)
+    assert.equal(capability.fallbackOnly, true)
+    assert.equal(capability.platformMode, 'macos_transparent_proxy')
+    assert.equal(capability.macosControllerAvailable, true)
+    assert.equal(capability.macosUserApprovalRequired, true)
+    assert.equal(capability.macosReasonCode, 'macos_data_plane_pending')
+    assert.equal(capability.macosSessionId, 'mac-session')
+    assert.ok(
+      executor.calls.some(
+        (call) => call.command === 'koala-macos-process-bypassctl' && call.args[0] === 'apply'
+      )
+    )
+
+    const report = evaluateBypassCapabilities({
+      config: {
+        tun: { enable: true },
+        rules: ['PROCESS-NAME,Telegram,DIRECT']
+      },
+      platform: 'darwin',
+      nativeProcessBypass: capability,
+      learnedProcessBypass: learnedResolution('learned_bypass'),
+      now: () => 1
+    })
+
+    assert.equal(report.rules[0].effectiveBypassMode, 'learned_bypass')
+    assert.equal(report.summary.trueBypassRuleCount, 0)
+  })
+
+  it('reports missing macOS controller as fallback-only support state', async () => {
+    const executor = createMockExecutor({ availableCommands: [] })
+    const capability = await startNativeProcessBypass({
+      enabled: true,
+      platform: 'darwin',
+      processNames: ['Telegram'],
+      executor
+    })
+
+    assert.equal(capability.active, false)
+    assert.equal(capability.platformMode, 'macos_fallback_only')
+    assert.equal(capability.macosControllerAvailable, false)
+    assert.equal(capability.diagnosticsReason, 'macos_controller_missing')
   })
 
   it('detects missing Windows native bypass prerequisites without claiming true bypass', async () => {
@@ -526,6 +600,7 @@ function createMockExecutor(input: {
   availableCommands: string[]
   failNftApply?: boolean
   windowsControllerActive?: boolean
+  macosControllerActive?: boolean
 }): NativeProcessBypassExecutor & {
   calls: Array<{ command: string; args: string[]; stdin?: string }>
 } {
@@ -535,7 +610,7 @@ function createMockExecutor(input: {
     async run(command, args, stdin) {
       calls.push({ command, args, stdin })
       if (command === 'sh' && args[1]?.startsWith('command -v ')) {
-        const checked = args[1].replace('command -v ', '').trim()
+        const checked = args[1].replace('command -v ', '').trim().replace(/^'|'$/g, '')
         if (input.availableCommands.includes(checked))
           return { stdout: `/usr/bin/${checked}\n`, stderr: '' }
         throw new Error(`${checked} missing`)
@@ -578,6 +653,58 @@ function createMockExecutor(input: {
             dataPlaneActive: false,
             reasonCode: 'windows_data_plane_inactive',
             message: 'inactive'
+          }),
+          stderr: ''
+        }
+      }
+      if (command === 'koala-macos-process-bypassctl') {
+        if (args[0] === 'cleanup') {
+          return {
+            stdout: JSON.stringify({
+              ok: true,
+              available: true,
+              entitlementsPresent: true,
+              extensionInstalled: true,
+              userApprovalRequired: false,
+              dataPlaneActive: false,
+              fallbackOnly: true,
+              reasonCode: 'macos_cleanup_complete',
+              diagnostics: ['cleaned']
+            }),
+            stderr: ''
+          }
+        }
+        if (input.macosControllerActive) {
+          return {
+            stdout: JSON.stringify({
+              ok: true,
+              available: true,
+              entitlementsPresent: true,
+              extensionInstalled: true,
+              userApprovalRequired: false,
+              dataPlaneActive: true,
+              fallbackOnly: false,
+              appliedProcessNames: ['Telegram'],
+              reasonCode: 'macos_data_plane_active',
+              diagnostics: ['active']
+            }),
+            stderr: ''
+          }
+        }
+        return {
+          stdout: JSON.stringify({
+            ok: false,
+            available: false,
+            entitlementsPresent: false,
+            extensionInstalled: false,
+            userApprovalRequired: true,
+            dataPlaneActive: false,
+            fallbackOnly: true,
+            reasonCode: 'macos_data_plane_pending',
+            message: 'pending',
+            diagnostics: ['fallback only'],
+            provider: 'NETransparentProxyProvider',
+            providerBundleIdentifier: 'com.koalaclash.processbypass.transparent-proxy'
           }),
           stderr: ''
         }

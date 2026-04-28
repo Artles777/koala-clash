@@ -1,4 +1,8 @@
 import {
+  isKoalaRuBundleRuleString,
+  pinKoalaRuBundleRulesLast
+} from '../routing/mihomo-rule-provider-presets'
+import {
   getUnifiedRuleDisplayTarget,
   isHiddenUnifiedRuntimeRule,
   isUserFacingRuleTarget,
@@ -125,10 +129,15 @@ export function appendUnifiedManagedRule(
   }
 
   return {
-    patch: {
+    patch: dedupeUnifiedRulePatchFile({
       ...next,
-      prepend: [...next.prepend, serializedRule]
-    },
+      prepend: isKoalaRuBundleRuleString(serializedRule)
+        ? next.prepend
+        : [...next.prepend, serializedRule],
+      append: isKoalaRuBundleRuleString(serializedRule)
+        ? [...next.append, serializedRule]
+        : next.append
+    }),
     added: true
   }
 }
@@ -141,10 +150,14 @@ export function dedupeUnifiedRulePatchFile(patch: UnifiedRulePatchFile): Unified
   const append = uniqueStrings(
     patch.append.filter((rule) => !disabledSet.has(rule) && !activeSet.has(rule))
   )
+  const pinnedRules = pinActiveRuBundleRules({
+    prepend,
+    append
+  })
 
   return {
-    prepend,
-    append,
+    prepend: pinnedRules.prepend,
+    append: pinnedRules.append,
     delete: uniqueStrings(patch.delete),
     disabled
   }
@@ -183,7 +196,7 @@ export function replaceUnifiedManagedRule(
 ): UnifiedRulePatchFile {
   const next = clonePatch(patch)
   next[section] = replaceAt(next[section], index, serializeUnifiedRuleDraft(draft))
-  return next
+  return dedupeUnifiedRulePatchFile(next)
 }
 
 export function removeUnifiedManagedRule(
@@ -202,7 +215,7 @@ export function moveUnifiedManagedRule(
   index: number,
   direction: 'up' | 'down'
 ): UnifiedRulePatchFile {
-  const next = clonePatch(patch)
+  const next = clonePatch(dedupeUnifiedRulePatchFile(patch))
   const targetIndex = direction === 'up' ? index - 1 : index + 1
   const sectionRules = next[section]
 
@@ -212,6 +225,7 @@ export function moveUnifiedManagedRule(
   const currentRule = sectionRules[index]
   const targetRule = sectionRules[targetIndex]
   if (currentRule === undefined || targetRule === undefined) return next
+  if (isKoalaRuBundleRuleString(currentRule) || isKoalaRuBundleRuleString(targetRule)) return next
 
   sectionRules[index] = targetRule
   sectionRules[targetIndex] = currentRule
@@ -231,11 +245,15 @@ export function setUnifiedManagedRuleEnabled(
 
   next[section] = removeAt(source, index)
   if (enabled) {
-    next.prepend = appendUnique(next.prepend, rule)
+    if (isKoalaRuBundleRuleString(rule)) {
+      next.append = appendUnique(next.append, rule)
+    } else {
+      next.prepend = appendUnique(next.prepend, rule)
+    }
   } else {
     next.disabled = appendUnique(next.disabled, rule)
   }
-  return next
+  return dedupeUnifiedRulePatchFile(next)
 }
 
 export function duplicateUnifiedManagedRuleToOwner(input: {
@@ -248,8 +266,12 @@ export function duplicateUnifiedManagedRuleToOwner(input: {
   if (!rule) return clonePatch(input.targetPatch)
 
   const nextTarget = clonePatch(input.targetPatch)
-  nextTarget.prepend = appendUnique(nextTarget.prepend, rule)
-  return nextTarget
+  if (isKoalaRuBundleRuleString(rule)) {
+    nextTarget.append = appendUnique(nextTarget.append, rule)
+  } else {
+    nextTarget.prepend = appendUnique(nextTarget.prepend, rule)
+  }
+  return dedupeUnifiedRulePatchFile(nextTarget)
 }
 
 export function isUnifiedManagedRuleSelectable(
@@ -327,7 +349,11 @@ export function duplicateUnifiedManagedRulesToOwner(input: {
         skippedDuplicate += 1
         continue
       }
-      next.prepend.push(serializedRule)
+      if (isKoalaRuBundleRuleString(serializedRule)) {
+        next.append.push(serializedRule)
+      } else {
+        next.prepend.push(serializedRule)
+      }
       existing.add(serializedRule)
       added += 1
     } catch (e) {
@@ -335,7 +361,7 @@ export function duplicateUnifiedManagedRulesToOwner(input: {
     }
   }
 
-  return { patch: next, added, skippedDuplicate, invalid }
+  return { patch: dedupeUnifiedRulePatchFile(next), added, skippedDuplicate, invalid }
 }
 
 export function importUnifiedRulesToPatch(input: {
@@ -368,7 +394,11 @@ export function importUnifiedRulesToPatch(input: {
         skippedDuplicate += 1
         continue
       }
-      next.prepend.push(serializedRule)
+      if (isKoalaRuBundleRuleString(serializedRule)) {
+        next.append.push(serializedRule)
+      } else {
+        next.prepend.push(serializedRule)
+      }
       existing.add(serializedRule)
       added += 1
     } catch (e) {
@@ -376,7 +406,7 @@ export function importUnifiedRulesToPatch(input: {
     }
   }
 
-  return { patch: next, added, skippedDuplicate, invalid }
+  return { patch: dedupeUnifiedRulePatchFile(next), added, skippedDuplicate, invalid }
 }
 
 export function createUnifiedRulesExportDocument(
@@ -473,6 +503,23 @@ function clonePatch(patch: UnifiedRulePatchFile): UnifiedRulePatchFile {
     append: [...patch.append],
     delete: [...patch.delete],
     disabled: [...patch.disabled]
+  }
+}
+
+function pinActiveRuBundleRules(patch: Pick<UnifiedRulePatchFile, 'prepend' | 'append'>): {
+  prepend: string[]
+  append: string[]
+} {
+  const prepend = patch.prepend.filter((rule) => !isKoalaRuBundleRuleString(rule))
+  const append = patch.append.filter((rule) => !isKoalaRuBundleRuleString(rule))
+  const pinned = pinKoalaRuBundleRulesLast([...patch.prepend, ...patch.append]).filter(
+    isKoalaRuBundleRuleString
+  )
+  const pinnedRule = pinned[pinned.length - 1]
+
+  return {
+    prepend,
+    append: pinnedRule ? [...append, pinnedRule] : append
   }
 }
 

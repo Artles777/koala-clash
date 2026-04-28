@@ -604,6 +604,83 @@ describe('Amnezia helper support diagnostics', () => {
     )
   })
 
+  it('surfaces macOS native controller status without treating it as true bypass', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      rulePacks: [],
+      tun: createTunSupportSnapshot(true, undefined, undefined, undefined, undefined, undefined, {
+        platform: 'darwin',
+        tunEnabled: true,
+        nativeProcessBypass: {
+          enabled: true,
+          platform: 'darwin',
+          supportedOnPlatform: false,
+          active: false,
+          status: 'blocked',
+          mechanism: 'macos-transparent-proxy-system-extension',
+          platformMode: 'macos_transparent_proxy',
+          nativeDataPlaneActive: false,
+          fallbackOnly: true,
+          fallbackReason: 'macos_data_plane_pending',
+          requiresPrivileges: false,
+          requiresService: false,
+          diagnosticsReason: 'macos_data_plane_pending',
+          diagnostics: ['macOS controller detected but provider is not approved.'],
+          activeProcesses: [],
+          macosControllerAvailable: true,
+          macosEntitlementsPresent: false,
+          macosExtensionInstalled: false,
+          macosUserApprovalRequired: true,
+          macosReasonCode: 'macos_data_plane_pending',
+          macosProvider: 'NETransparentProxyProvider',
+          macosProviderBundleIdentifier: 'com.koalaclash.processbypass.transparent-proxy'
+        },
+        rules: [
+          {
+            rule: 'PROCESS-NAME,Telegram,DIRECT',
+            ruleType: 'PROCESS-NAME',
+            value: 'Telegram',
+            target: 'DIRECT',
+            effectiveBypassMode: 'direct_only',
+            platformSupport: 'unsupported',
+            requiresPrivileges: false,
+            requiresNativeBypass: true,
+            diagnosticsReason: 'native_process_bypass_not_active',
+            diagnosticsMessage: 'macOS native process bypass control plane is fallback-only.'
+          }
+        ],
+        summary: {
+          trueBypassRuleCount: 0,
+          partialBypassRuleCount: 0,
+          learnedBypassRuleCount: 0,
+          directOnlyRuleCount: 1,
+          unsupportedRuleCount: 0,
+          processDirectRuleCount: 1
+        },
+        warnings: ['macOS native bypass control plane is not active.'],
+        evaluatedAt: 1710000000000
+      })
+    })
+
+    assert.equal(bundle.tun.nativeProcessBypassMacosControllerAvailable, true)
+    assert.equal(bundle.tun.nativeProcessBypassMacosUserApprovalRequired, true)
+    assert.equal(bundle.tun.nativeProcessBypassNativeDataPlaneActive, false)
+    assert.ok(
+      bundle.support.statuses.some(
+        (status) => status.code === 'macos_native_bypass_user_approval_required'
+      )
+    )
+    assert.ok(
+      bundle.readinessSummary.recommendedActions.some(
+        (action) => action.code === 'prepare_macos_network_extension'
+      )
+    )
+  })
+
   it('adds a support warning when TUN domain helper rules are unlikely to match', () => {
     const rule = createAmneziaHelperRule({
       id: 'domain-rule',

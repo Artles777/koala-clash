@@ -1179,6 +1179,37 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                       />
                     </>
                   ) : null}
+                  {supportSnapshot?.tun.nativeProcessBypassPlatformMode ===
+                    'macos_transparent_proxy' ||
+                  supportSnapshot?.tun.nativeProcessBypassPlatformMode === 'macos_fallback_only' ? (
+                    <>
+                      <RuntimeRow
+                        label={t('profile.nativeProcessBypassMacosController')}
+                        value={formatBoolean(
+                          t,
+                          supportSnapshot?.tun.nativeProcessBypassMacosControllerAvailable ?? false
+                        )}
+                      />
+                      <RuntimeRow
+                        label={t('profile.nativeProcessBypassMacosExtension')}
+                        value={formatBoolean(
+                          t,
+                          supportSnapshot?.tun.nativeProcessBypassMacosExtensionInstalled ?? false
+                        )}
+                      />
+                      <RuntimeRow
+                        label={t('profile.nativeProcessBypassMacosApproval')}
+                        value={formatBoolean(
+                          t,
+                          supportSnapshot?.tun.nativeProcessBypassMacosUserApprovalRequired ?? false
+                        )}
+                      />
+                      <RuntimeRow
+                        label={t('profile.nativeProcessBypassMacosReason')}
+                        value={supportSnapshot?.tun.nativeProcessBypassMacosReasonCode ?? '-'}
+                      />
+                    </>
+                  ) : null}
                   <RuntimeRow
                     label={t('profile.nativeProcessBypassFallback')}
                     value={

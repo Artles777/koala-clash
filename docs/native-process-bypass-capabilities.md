@@ -41,6 +41,11 @@ The code now includes:
 - fallback precedence: native true bypass, then learned bypass, then direct-only,
 - support/debug fields for native capability and effective PROCESS-NAME mode.
 
+The main Rules page now surfaces this capability state directly on each relevant `DIRECT` rule. It
+shows a compact label such as `True bypass`, `Partial bypass`, `Learned bypass`, `DIRECT only`,
+`Fallback only`, or `No TUN bypass`, plus a short hint for platform-specific cases. These labels are
+presentation-only; they do not change Mihomo rules, helper routing, or any runtime bypass behavior.
+
 The Linux adapter now has an MVP apply/cleanup path. It attempts to:
 
 1. verify Linux, cgroup v2, `nft`, `ip`, and privileges,
@@ -111,10 +116,26 @@ The current architecture does not claim true native PROCESS-NAME bypass on macOS
 
 This avoids implying that process-name rules can exclude an app from TUN at the OS layer on macOS.
 
+The first native macOS feasibility scaffold now lives under `native/macos-process-bypass`. It uses a
+Network Extension/System Extension contract around `NETransparentProxyProvider`, but it intentionally
+reports `dataPlaneActive: false` and `fallbackOnly: true`. Koala should not integrate it as native
+`true_bypass` until a signed provider is installed, user-approved, and able to confirm an active
+per-process data plane.
+
+Koala can now query the scaffold control plane and surface controller, entitlement, extension,
+approval, and `dataPlaneActive` status in support/debug output. This does not change precedence:
+macOS remains native, then learned, then direct-only, and the current scaffold never reaches the
+native active step.
+
+See `docs/macos-process-bypass-native.md` for the entitlement, signing, provider, and future
+integration plan.
+
 ## Remaining Work
 
 - add a privileged Linux service/helper path so GUI launches do not need direct root/CAP_NET_ADMIN,
 - replace polling with a stronger platform event/service implementation if needed,
 - implement/package/sign the Windows `KoalaProcessBypass` WFP service and controller,
+- validate the macOS Network Extension/System Extension scaffold with a real signed build before any
+  Koala-side `macos_transparent_proxy` mode is added,
 - run packaged cleanup/recovery smoke validation for native routing state,
 - add packaged smoke validation for Linux and Windows true native process bypass diagnostics.

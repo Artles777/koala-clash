@@ -37,7 +37,13 @@ import {
   UnifiedUiBundle
 } from '../../../core/ui/unified-ui'
 import {
+  getUnifiedRuleBypassPresentation,
+  type UnifiedRuleBypassContext,
+  type UnifiedRuleBypassTone
+} from '../../../core/ui/unified-rule-bypass'
+import {
   createKoalaRuBundleRule,
+  isKoalaRuBundleRuleString,
   KOALA_RU_BUNDLE_RULE_PROVIDER_NAME
 } from '../../../core/routing/mihomo-rule-provider-presets'
 import {
@@ -117,6 +123,7 @@ const Rules: React.FC = () => {
   const { groups } = useGroups()
   const {
     bundle,
+    amneziaSupport,
     mutateMihomoRules,
     mutateAmneziaRulePacks,
     mutateAmneziaStatus,
@@ -301,6 +308,33 @@ const Rules: React.FC = () => {
   const allFilteredManagedRulesSelected =
     selectableFilteredRuleIds.length > 0 &&
     selectableFilteredRuleIds.every((ruleId) => selectedRuleIdSet.has(ruleId))
+  const bypassContext = useMemo<UnifiedRuleBypassContext>(
+    () => ({
+      platform: amneziaSupport?.platform.platform,
+      tunEnabled: amneziaSupport?.tun.enabled,
+      directTunBypassActive: amneziaSupport?.tun.directTunBypassActive,
+      directTunBypassStatus: amneziaSupport?.tun.directTunBypassStatus,
+      directExcludeOverallStatus: amneziaSupport?.tun.directExcludeOverallStatus,
+      learnedBypassActive: amneziaSupport?.tun.learnedBypassActive,
+      learnedBypassOverallStatus: amneziaSupport?.tun.learnedBypassOverallStatus,
+      learnedBypassEntryCount: amneziaSupport?.tun.learnedBypassEntryCount,
+      nativeProcessBypassActive: amneziaSupport?.tun.nativeProcessBypassActive,
+      nativeProcessBypassPlatformMode: amneziaSupport?.tun.nativeProcessBypassPlatformMode,
+      nativeProcessBypassNativeDataPlaneActive:
+        amneziaSupport?.tun.nativeProcessBypassNativeDataPlaneActive,
+      nativeProcessBypassFallbackOnly: amneziaSupport?.tun.nativeProcessBypassFallbackOnly,
+      nativeProcessBypassWindowsServiceAvailable:
+        amneziaSupport?.tun.nativeProcessBypassWindowsServiceAvailable,
+      nativeProcessBypassWindowsControllerAvailable:
+        amneziaSupport?.tun.nativeProcessBypassWindowsControllerAvailable,
+      nativeProcessBypassMacosControllerAvailable:
+        amneziaSupport?.tun.nativeProcessBypassMacosControllerAvailable,
+      nativeProcessBypassMacosUserApprovalRequired:
+        amneziaSupport?.tun.nativeProcessBypassMacosUserApprovalRequired,
+      processDirectEffectiveBypassMode: amneziaSupport?.tun.processDirectEffectiveBypassMode
+    }),
+    [amneziaSupport]
+  )
 
   useEffect(() => {
     const availableRuleIds = new Set(allDisplayRules.map((rule) => rule.id))
@@ -684,10 +718,15 @@ const Rules: React.FC = () => {
 
   const canMoveRule = (rule: UnifiedRuleItem, direction: 'up' | 'down'): boolean => {
     if (!isUnifiedManagedRuleSelectable(rule)) return false
-    const sectionLength = getOwnerPatch(rule.ownerProfileId)[rule.managedPatchSection].length
+    const sectionRules = getOwnerPatch(rule.ownerProfileId)[rule.managedPatchSection]
+    const currentRule = sectionRules[rule.managedPatchIndex]
+    if (!currentRule || isKoalaRuBundleRuleString(currentRule)) return false
+    const targetIndex = direction === 'up' ? rule.managedPatchIndex - 1 : rule.managedPatchIndex + 1
+    const targetRule = sectionRules[targetIndex]
+    if (targetRule && isKoalaRuBundleRuleString(targetRule)) return false
     return direction === 'up'
       ? rule.managedPatchIndex > 0
-      : rule.managedPatchIndex < sectionLength - 1
+      : rule.managedPatchIndex < sectionRules.length - 1
   }
 
   return (
@@ -741,7 +780,7 @@ const Rules: React.FC = () => {
                   <SelectTrigger size="sm" className="w-36">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper" align="start">
                     <SelectItem value="all">{t('pages.rules.scopeAll')}</SelectItem>
                     {bundle.ruleScopes.map((scope) => (
                       <SelectItem key={scope.id} value={scope.id}>
@@ -764,7 +803,7 @@ const Rules: React.FC = () => {
                 <SelectTrigger size="sm" className="w-56">
                   <SelectValue placeholder={t('pages.rules.selectRuleOwner')} />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper" align="start">
                   {bundle.ruleOwners.map((owner) => (
                     <SelectItem key={owner.id} value={owner.id}>
                       {getOwnerLabel(t, owner)}
@@ -782,7 +821,7 @@ const Rules: React.FC = () => {
                 <SelectTrigger size="sm" className="w-40">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper" align="start">
                   {unifiedRuleTypes.map((type) => (
                     <SelectItem key={type} value={type}>
                       {type}
@@ -811,7 +850,7 @@ const Rules: React.FC = () => {
                 <SelectTrigger size="sm" className="w-44">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper" align="start">
                   {targetOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
@@ -887,7 +926,7 @@ const Rules: React.FC = () => {
                 <SelectTrigger size="sm" className="w-36">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper" align="start">
                   <SelectItem value="all">{t('pages.rules.scopeAll')}</SelectItem>
                   <SelectItem value="mihomo">{t('pages.rules.ownerMihomo')}</SelectItem>
                   <SelectItem value="amnezia">{t('pages.rules.ownerVpn')}</SelectItem>
@@ -897,7 +936,7 @@ const Rules: React.FC = () => {
                 <SelectTrigger size="sm" className="w-48">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper" align="start">
                   <SelectItem value="all">{t('pages.rules.allProfiles')}</SelectItem>
                   {bundle.ruleOwners.map((owner) => (
                     <SelectItem key={owner.id} value={owner.ownerProfileId}>
@@ -910,7 +949,7 @@ const Rules: React.FC = () => {
                 <SelectTrigger size="sm" className="w-40">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper" align="start">
                   <SelectItem value="all">{t('pages.rules.allActions')}</SelectItem>
                   {actionFilterOptions.map((target) => (
                     <SelectItem key={target} value={target}>
@@ -940,7 +979,7 @@ const Rules: React.FC = () => {
                 <SelectTrigger size="sm" className="w-52">
                   <SelectValue placeholder={t('pages.rules.duplicateTarget')} />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper" align="start">
                   {bundle.ruleOwners.map((owner) => (
                     <SelectItem key={owner.id} value={owner.id}>
                       {getOwnerLabel(t, owner)}
@@ -1072,91 +1111,98 @@ const Rules: React.FC = () => {
       <div className="h-[calc(100vh-214px)] mt-px">
         <Virtuoso
           data={filteredRules}
-          itemContent={(i, rule) => (
-            <RuleItem
-              index={i}
-              type={rule.type}
-              payload={rule.value}
-              proxy={getRuleTargetLabel(t, rule)}
-              size={rule.size}
-              enabled={rule.enabled}
-              note={rule.note}
-              sourceLabel={getRuleSourceLabel(t, rule)}
-              scopeLabel={rule.ownerProfileName}
-              disabledLabel={t('profile.helperRuleDisabled')}
-              actions={
-                rule.editable && rule.managedPatchSection !== undefined ? (
-                  <>
-                    <Checkbox
-                      checked={selectedRuleIdSet.has(rule.id)}
-                      disabled={rulesBusy}
-                      title={t('pages.rules.selectRule')}
-                      onCheckedChange={(checked) =>
-                        handleToggleRuleSelection(rule, checked === true)
-                      }
-                    />
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      disabled={rulesBusy || !canMoveRule(rule, 'up')}
-                      title={t('pages.rules.moveRuleUp')}
-                      onClick={() => handleMoveRule(rule, 'up')}
-                    >
-                      <ArrowUp className="size-4" />
-                    </Button>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      disabled={rulesBusy || !canMoveRule(rule, 'down')}
-                      title={t('pages.rules.moveRuleDown')}
-                      onClick={() => handleMoveRule(rule, 'down')}
-                    >
-                      <ArrowDown className="size-4" />
-                    </Button>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      disabled={rulesBusy}
-                      title={t('pages.rules.editRule')}
-                      onClick={() => handleStartEditRule(rule)}
-                    >
-                      <Pencil className="size-4" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={rulesBusy}
-                      onClick={() => handleToggleRule(rule)}
-                    >
-                      {rule.enabled ? t('pages.rules.disableRule') : t('pages.rules.enableRule')}
-                    </Button>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      disabled={
-                        rulesBusy ||
-                        !duplicateOwner ||
-                        duplicateOwner.ownerProfileId === rule.ownerProfileId
-                      }
-                      title={t('pages.rules.duplicateRuleToProfile')}
-                      onClick={() => handleDuplicateRule(rule)}
-                    >
-                      <Copy className="size-4" />
-                    </Button>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      disabled={rulesBusy}
-                      title={t('pages.rules.deleteRule')}
-                      onClick={() => handleDeleteRule(rule)}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </>
-                ) : undefined
-              }
-            />
-          )}
+          itemContent={(i, rule) => {
+            const bypass = getUnifiedRuleBypassPresentation(rule, bypassContext)
+            return (
+              <RuleItem
+                index={i}
+                type={rule.type}
+                payload={rule.value}
+                proxy={getRuleTargetLabel(t, rule)}
+                bypassLabel={bypass ? t(bypass.labelKey) : undefined}
+                bypassHint={bypass ? t(bypass.hintKey) : undefined}
+                bypassTone={bypass?.tone}
+                bypassVariant={getBypassBadgeVariant(bypass?.tone)}
+                size={rule.size}
+                enabled={rule.enabled}
+                note={rule.note}
+                sourceLabel={getRuleSourceLabel(t, rule)}
+                scopeLabel={rule.ownerProfileName}
+                disabledLabel={t('profile.helperRuleDisabled')}
+                actions={
+                  rule.editable && rule.managedPatchSection !== undefined ? (
+                    <>
+                      <Checkbox
+                        checked={selectedRuleIdSet.has(rule.id)}
+                        disabled={rulesBusy}
+                        title={t('pages.rules.selectRule')}
+                        onCheckedChange={(checked) =>
+                          handleToggleRuleSelection(rule, checked === true)
+                        }
+                      />
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        disabled={rulesBusy || !canMoveRule(rule, 'up')}
+                        title={t('pages.rules.moveRuleUp')}
+                        onClick={() => handleMoveRule(rule, 'up')}
+                      >
+                        <ArrowUp className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        disabled={rulesBusy || !canMoveRule(rule, 'down')}
+                        title={t('pages.rules.moveRuleDown')}
+                        onClick={() => handleMoveRule(rule, 'down')}
+                      >
+                        <ArrowDown className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        disabled={rulesBusy}
+                        title={t('pages.rules.editRule')}
+                        onClick={() => handleStartEditRule(rule)}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={rulesBusy}
+                        onClick={() => handleToggleRule(rule)}
+                      >
+                        {rule.enabled ? t('pages.rules.disableRule') : t('pages.rules.enableRule')}
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        disabled={
+                          rulesBusy ||
+                          !duplicateOwner ||
+                          duplicateOwner.ownerProfileId === rule.ownerProfileId
+                        }
+                        title={t('pages.rules.duplicateRuleToProfile')}
+                        onClick={() => handleDuplicateRule(rule)}
+                      >
+                        <Copy className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        disabled={rulesBusy}
+                        title={t('pages.rules.deleteRule')}
+                        onClick={() => handleDeleteRule(rule)}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </>
+                  ) : undefined
+                }
+              />
+            )
+          }}
         />
       </div>
     </BasePage>
@@ -1226,6 +1272,16 @@ function getStatusBadgeVariant(
   if (status === 'warning') return 'outline'
   if (status === 'ready') return 'default'
   return 'secondary'
+}
+
+function getBypassBadgeVariant(
+  tone: UnifiedRuleBypassTone | undefined
+): 'default' | 'secondary' | 'destructive' | 'outline' | undefined {
+  if (tone === 'info') return 'default'
+  if (tone === 'danger') return 'destructive'
+  if (tone === 'warning') return 'outline'
+  if (tone === 'neutral') return 'secondary'
+  return undefined
 }
 
 function getStatusLabel(

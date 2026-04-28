@@ -14,6 +14,27 @@ export function createKoalaRuBundleRule(target: string): string {
   return `RULE-SET,${KOALA_RU_BUNDLE_RULE_PROVIDER_NAME},${target.trim()}`
 }
 
+export function isKoalaRuBundleRuleString(rule: string): boolean {
+  const [type, value] = rule.split(',').map((part) => part.trim())
+  return type?.toUpperCase() === 'RULE-SET' && value === KOALA_RU_BUNDLE_RULE_PROVIDER_NAME
+}
+
+export function pinKoalaRuBundleRulesLast(rules: string[]): string[] {
+  const regularRules: string[] = []
+  const ruBundleRules: string[] = []
+
+  for (const rule of rules) {
+    if (isKoalaRuBundleRuleString(rule)) {
+      ruBundleRules.push(rule)
+    } else {
+      regularRules.push(rule)
+    }
+  }
+
+  const pinnedRule = ruBundleRules[ruBundleRules.length - 1]
+  return pinnedRule ? [...regularRules, pinnedRule] : regularRules
+}
+
 export function ensureMihomoRuleProviderPresets<T extends MihomoRoutingConfig>(config: T): T {
   if (!usesRuleProvider(config, KOALA_RU_BUNDLE_RULE_PROVIDER_NAME)) return config
 
@@ -38,7 +59,7 @@ function usesRuleProvider(config: MihomoRoutingConfig, providerName: string): bo
   return config.rules.some((rule) => {
     if (typeof rule !== 'string') return false
     const [type, value] = rule.split(',').map((part) => part.trim())
-    return type.toUpperCase() === 'RULE-SET' && value === providerName
+    return type?.toUpperCase() === 'RULE-SET' && value === providerName
   })
 }
 

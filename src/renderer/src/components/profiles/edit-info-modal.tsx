@@ -38,8 +38,8 @@ import {
 interface Props {
   item: ProfileItem
   isCurrent: boolean
-  updateProfileItem: (item: ProfileItem) => Promise<void>
-  onImported?: () => void
+  updateProfileItem: (item: ProfileItem) => Promise<ProfileItem | void | undefined>
+  onImported?: (item?: ProfileItem) => void
   onClose: () => void
 }
 
@@ -64,22 +64,30 @@ const EditInfoModal: React.FC<Props> = (props) => {
     setSaving(true)
     try {
       if (isNew && !isLocal) {
+        let importedProfile: ProfileItem | undefined
         await submitProfileImportInput(values.url || '', {
           importRemoteUrl: async (url) => {
-            await updateProfileItem({ ...values, type: 'remote', url })
+            importedProfile = (await updateProfileItem({
+              ...values,
+              type: 'remote',
+              url
+            })) as ProfileItem | undefined
           },
           importAmneziaKey: async (raw) => {
-            await importAmneziaKey(raw)
+            importedProfile = await importAmneziaKey(raw)
             toast.success(t('pages.profiles.importAmneziaSuccess'))
-            onImported?.()
           }
         })
+        onImported?.(importedProfile)
         closeRef.current?.click()
         return
       }
 
       const itemToSave = { ...values }
-      await updateProfileItem(itemToSave)
+      const savedProfile = (await updateProfileItem(itemToSave)) as ProfileItem | undefined
+      if (isNew) {
+        onImported?.(savedProfile)
+      }
       if (item.id && isCurrent) {
         await mihomoHotReloadConfig()
       }

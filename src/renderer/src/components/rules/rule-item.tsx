@@ -7,6 +7,10 @@ interface RuleItemProps {
   type: string
   payload: string
   proxy: string
+  bypassLabel?: string
+  bypassHint?: string
+  bypassTone?: 'info' | 'warning' | 'danger' | 'neutral'
+  bypassVariant?: 'default' | 'secondary' | 'destructive' | 'outline'
   size?: number
   enabled?: boolean
   disabledLabel?: string
@@ -21,6 +25,10 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
     type,
     payload,
     proxy,
+    bypassLabel,
+    bypassHint,
+    bypassTone,
+    bypassVariant,
     index,
     enabled,
     disabledLabel,
@@ -63,6 +71,15 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
                 >
                   {proxy}
                 </Badge>
+                {bypassLabel && (
+                  <Badge
+                    variant={bypassVariant ?? 'outline'}
+                    className="rounded-sm"
+                    title={bypassHint}
+                  >
+                    {bypassLabel}
+                  </Badge>
+                )}
                 {enabled === false && (
                   <Badge variant="secondary" className="rounded-sm">
                     {disabledLabel ?? 'Disabled'}
@@ -72,6 +89,14 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
               {note && (
                 <div className="mt-1 text-xs text-muted-foreground truncate" title={note}>
                   {note}
+                </div>
+              )}
+              {bypassHint && (bypassTone === 'warning' || bypassTone === 'danger') && (
+                <div
+                  className={`mt-1 text-xs truncate ${getBypassHintClassName(bypassTone)}`}
+                  title={bypassHint}
+                >
+                  {bypassHint}
                 </div>
               )}
             </div>
@@ -88,6 +113,12 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
       </Card>
     </div>
   )
+}
+
+function getBypassHintClassName(tone: RuleItemProps['bypassTone']): string {
+  if (tone === 'danger') return 'text-destructive'
+  if (tone === 'warning') return 'text-warning'
+  return 'text-muted-foreground'
 }
 
 export default RuleItem

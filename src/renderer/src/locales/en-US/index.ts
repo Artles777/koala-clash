@@ -194,6 +194,13 @@ export default {
       emptyDescription: 'Add a profile to get started',
       addProfile: 'Add Profile',
       dropFileHint: 'Drop config file here',
+      ruBundlePromptTitle: 'Next step: RU bundle',
+      ruBundlePromptDescription:
+        'Add ru-bundle to {{name}} so Russian-language sites use DIRECT by default.',
+      ruBundlePromptAction: 'Add RU bundle',
+      ruBundlePromptDismiss: 'Not now',
+      ruBundlePromptAdded: 'RU bundle added to {{name}}',
+      ruBundlePromptAlreadyAdded: 'RU bundle is already present in {{name}}',
       hwidLimitTitle: 'Device limit exceeded',
       hwidLimitDescription:
         'The maximum device limit for this subscription has been reached. The subscription was not added or updated.',
@@ -253,6 +260,56 @@ export default {
       ownerVpn: 'VPN',
       currentOwner: 'current',
       actionVpnProxy: 'VPN / PROXY',
+      bypassTrue: 'True bypass',
+      bypassPartial: 'Partial bypass',
+      bypassLearned: 'Learned bypass',
+      bypassDirectOnly: 'DIRECT only',
+      bypassFallbackOnly: 'Fallback only',
+      bypassUnsupported: 'No TUN bypass',
+      bypassHintTunDisabled: 'TUN is disabled; this rule uses normal DIRECT behavior.',
+      bypassHintAddressExcluded: 'This IP-CIDR rule is injected into runtime TUN exclusions.',
+      bypassHintAddressPartial: 'This address rule has partial runtime TUN exclusion coverage.',
+      bypassHintAddressBlocked: 'This address rule could not be injected as a TUN exclusion.',
+      bypassHintAddressNotActive: 'This address rule is DIRECT inside Mihomo only right now.',
+      bypassHintDomainExcluded:
+        'This domain was resolved and injected into runtime TUN exclusions.',
+      bypassHintDomainPartial: 'This domain uses resolved IP exclusions; coverage may be partial.',
+      bypassHintDomainUnresolved: 'This domain could not be resolved for TUN exclusion.',
+      bypassHintDomainNotResolved: 'This domain is not currently resolved into TUN exclusions.',
+      bypassHintDomainSuffixPartial:
+        'DOMAIN-SUFFIX can only be bypassed through resolved IPs, so coverage is partial.',
+      bypassHintDomainSuffixUnresolved:
+        'This suffix could not be converted into runtime TUN exclusions.',
+      bypassHintDomainSuffixNotResolved:
+        'This suffix is DIRECT inside Mihomo until observed/resolved IPs are excluded.',
+      bypassHintDomainKeywordUnsupported:
+        'DOMAIN-KEYWORD cannot be safely translated into deterministic TUN exclusions.',
+      bypassHintProcessLinuxActive:
+        'Linux native process bypass is active for this PROCESS-NAME rule.',
+      bypassHintProcessWindowsActive:
+        'Windows WFP process bypass reports an active data plane for this rule.',
+      bypassHintProcessMacosActive:
+        'macOS native process bypass reports an active data plane for this rule.',
+      bypassHintProcessNativeActive: 'Native process bypass is active for this rule.',
+      bypassHintProcessLearnedActive:
+        'Observed destination IPs for this process are injected as best-effort TUN exclusions.',
+      bypassHintProcessLearnedObserving:
+        'No observed IPs yet; generate matching traffic or use IP-CIDR/DOMAIN rules.',
+      bypassHintProcessLearnedStale:
+        'Learned process IPs are stale; this rule is currently plain DIRECT inside Mihomo.',
+      bypassHintProcessMacosFallback:
+        'macOS PROCESS-NAME DIRECT is fallback-only until a real native data plane exists.',
+      bypassHintProcessWindowsControllerMissing:
+        'Windows true process bypass needs koala-process-bypassctl and the WFP service.',
+      bypassHintProcessWindowsServiceMissing:
+        'Windows true process bypass needs the KoalaProcessBypass service.',
+      bypassHintProcessWindowsDataplaneInactive:
+        'Windows service/controller are not reporting an active process bypass data plane.',
+      bypassHintProcessLinuxInactive:
+        'Linux native process bypass is not active; this remains normal DIRECT for now.',
+      bypassHintProcessNoObservedIps:
+        'PROCESS-NAME DIRECT has no native bypass and no learned destination IPs yet.',
+      bypassHintUnsupported: 'This rule type cannot become a runtime TUN exclusion.',
       matchRuleValuePlaceholder: 'MATCH has no value: it applies to remaining traffic',
       addRuBundle: 'RU bundle',
       ruBundleAdded: 'RU bundle added to {{name}} with action {{action}}',
@@ -1086,6 +1143,10 @@ export default {
     nativeProcessBypassPrerequisites: 'Native prerequisites',
     nativeProcessBypassWindowsService: 'Windows WFP service',
     nativeProcessBypassWindowsController: 'Windows WFP controller',
+    nativeProcessBypassMacosController: 'macOS controller',
+    nativeProcessBypassMacosExtension: 'macOS extension installed',
+    nativeProcessBypassMacosApproval: 'macOS user approval required',
+    nativeProcessBypassMacosReason: 'macOS native reason',
     nativeProcessBypassFallback: 'Native fallback',
     nativeProcessBypassPids: 'Native tracked PIDs',
     nativeProcessBypassReconcile: 'Native PID reconcile',

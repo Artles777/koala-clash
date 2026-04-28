@@ -93,6 +93,11 @@ export type AmneziaHelperSupportStatusCode =
   | 'windows_native_bypass_active'
   | 'windows_native_bypass_apply_failed'
   | 'macos_native_bypass_fallback_only'
+  | 'macos_native_bypass_controller_missing'
+  | 'macos_native_bypass_control_plane'
+  | 'macos_native_bypass_user_approval_required'
+  | 'macos_native_bypass_data_plane_pending'
+  | 'macos_native_bypass_active'
   | 'udp_supported'
   | 'udp_tcp_only'
 
@@ -310,6 +315,15 @@ export interface AmneziaHelperTunSupportSnapshot {
   nativeProcessBypassWindowsControllerAvailable?: boolean
   nativeProcessBypassWindowsSessionId?: string
   nativeProcessBypassWindowsAppliedProcessCount?: number
+  nativeProcessBypassMacosControllerAvailable?: boolean
+  nativeProcessBypassMacosEntitlementsPresent?: boolean
+  nativeProcessBypassMacosExtensionInstalled?: boolean
+  nativeProcessBypassMacosUserApprovalRequired?: boolean
+  nativeProcessBypassMacosReasonCode?: string
+  nativeProcessBypassMacosProvider?: string
+  nativeProcessBypassMacosProviderBundleIdentifier?: string
+  nativeProcessBypassMacosSessionId?: string
+  nativeProcessBypassMacosAppliedProcessCount?: number
   processDirectEffectiveBypassMode: EffectiveBypassMode
   bypassCapabilityWarnings: string[]
   bypassCapabilitySummary: BypassCapabilityReport['summary']
@@ -446,6 +460,13 @@ export interface AmneziaHelperSupportSummaryExport {
     | 'nativeProcessBypassWindowsServiceAvailable'
     | 'nativeProcessBypassWindowsControllerAvailable'
     | 'nativeProcessBypassWindowsAppliedProcessCount'
+    | 'nativeProcessBypassMacosControllerAvailable'
+    | 'nativeProcessBypassMacosEntitlementsPresent'
+    | 'nativeProcessBypassMacosExtensionInstalled'
+    | 'nativeProcessBypassMacosUserApprovalRequired'
+    | 'nativeProcessBypassMacosReasonCode'
+    | 'nativeProcessBypassMacosProvider'
+    | 'nativeProcessBypassMacosAppliedProcessCount'
     | 'processDirectEffectiveBypassMode'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'
@@ -838,6 +859,21 @@ export function createTunSupportSnapshot(
     nativeProcessBypassWindowsSessionId: bypassCapabilities?.nativeProcessBypass.windowsSessionId,
     nativeProcessBypassWindowsAppliedProcessCount:
       bypassCapabilities?.nativeProcessBypass.windowsAppliedProcessCount,
+    nativeProcessBypassMacosControllerAvailable:
+      bypassCapabilities?.nativeProcessBypass.macosControllerAvailable,
+    nativeProcessBypassMacosEntitlementsPresent:
+      bypassCapabilities?.nativeProcessBypass.macosEntitlementsPresent,
+    nativeProcessBypassMacosExtensionInstalled:
+      bypassCapabilities?.nativeProcessBypass.macosExtensionInstalled,
+    nativeProcessBypassMacosUserApprovalRequired:
+      bypassCapabilities?.nativeProcessBypass.macosUserApprovalRequired,
+    nativeProcessBypassMacosReasonCode: bypassCapabilities?.nativeProcessBypass.macosReasonCode,
+    nativeProcessBypassMacosProvider: bypassCapabilities?.nativeProcessBypass.macosProvider,
+    nativeProcessBypassMacosProviderBundleIdentifier:
+      bypassCapabilities?.nativeProcessBypass.macosProviderBundleIdentifier,
+    nativeProcessBypassMacosSessionId: bypassCapabilities?.nativeProcessBypass.macosSessionId,
+    nativeProcessBypassMacosAppliedProcessCount:
+      bypassCapabilities?.nativeProcessBypass.macosAppliedProcessCount,
     processDirectEffectiveBypassMode: getProcessDirectEffectiveBypassMode(bypassCapabilities),
     bypassCapabilityWarnings: bypassCapabilities?.warnings.map((warning) => warning) ?? [],
     bypassCapabilitySummary: bypassCapabilities?.summary ?? {
@@ -1254,6 +1290,20 @@ function collectRecommendedActions(
       'macOS PROCESS-NAME DIRECT is fallback-only; prefer DOMAIN/IP-CIDR DIRECT excludes or learned process-to-IP bypass.'
     )
   }
+  if (
+    hasAny(codes, [
+      'macos_native_bypass_controller_missing',
+      'macos_native_bypass_control_plane',
+      'macos_native_bypass_user_approval_required',
+      'macos_native_bypass_data_plane_pending'
+    ])
+  ) {
+    add(
+      'prepare_macos_network_extension',
+      'warning',
+      'macOS native PROCESS-NAME bypass needs the signed Network/System Extension controller/provider before it can replace fallback bypass.'
+    )
+  }
   if (codes.has('stability_not_validated')) {
     add(
       'run_stability_smoke',
@@ -1402,6 +1452,18 @@ function createSupportSummaryExport(input: {
         input.tun.nativeProcessBypassWindowsControllerAvailable,
       nativeProcessBypassWindowsAppliedProcessCount:
         input.tun.nativeProcessBypassWindowsAppliedProcessCount,
+      nativeProcessBypassMacosControllerAvailable:
+        input.tun.nativeProcessBypassMacosControllerAvailable,
+      nativeProcessBypassMacosEntitlementsPresent:
+        input.tun.nativeProcessBypassMacosEntitlementsPresent,
+      nativeProcessBypassMacosExtensionInstalled:
+        input.tun.nativeProcessBypassMacosExtensionInstalled,
+      nativeProcessBypassMacosUserApprovalRequired:
+        input.tun.nativeProcessBypassMacosUserApprovalRequired,
+      nativeProcessBypassMacosReasonCode: input.tun.nativeProcessBypassMacosReasonCode,
+      nativeProcessBypassMacosProvider: input.tun.nativeProcessBypassMacosProvider,
+      nativeProcessBypassMacosAppliedProcessCount:
+        input.tun.nativeProcessBypassMacosAppliedProcessCount,
       processDirectEffectiveBypassMode: input.tun.processDirectEffectiveBypassMode,
       helperRuleReliability: input.tun.helperRuleReliability,
       helperRuleReliabilityReason: input.tun.helperRuleReliabilityReason
@@ -1673,8 +1735,21 @@ function collectSupportStatuses(input: CreateSupportSummaryInput): AmneziaHelper
       } else {
         statuses.push(createStatus('windows_native_bypass_scaffold'))
       }
-    } else if (tun.nativeProcessBypassPlatformMode === 'macos_fallback_only') {
-      statuses.push(createStatus('macos_native_bypass_fallback_only'))
+    } else if (
+      tun.nativeProcessBypassPlatformMode === 'macos_transparent_proxy' ||
+      tun.nativeProcessBypassPlatformMode === 'macos_fallback_only'
+    ) {
+      if (tun.nativeProcessBypassActive && tun.nativeProcessBypassNativeDataPlaneActive) {
+        statuses.push(createStatus('macos_native_bypass_active'))
+      } else if (tun.nativeProcessBypassMacosControllerAvailable === false) {
+        statuses.push(createStatus('macos_native_bypass_controller_missing'))
+      } else if (tun.nativeProcessBypassMacosUserApprovalRequired) {
+        statuses.push(createStatus('macos_native_bypass_user_approval_required'))
+      } else if (tun.nativeProcessBypassPlatformMode === 'macos_transparent_proxy') {
+        statuses.push(createStatus('macos_native_bypass_data_plane_pending'))
+      } else {
+        statuses.push(createStatus('macos_native_bypass_fallback_only'))
+      }
     } else if (tun.nativeProcessBypassActive) {
       statuses.push(createStatus('native_process_bypass_active'))
     } else if (tun.nativeProcessBypassEnabled && tun.nativeProcessBypassStatus === 'available') {
@@ -2067,6 +2142,36 @@ const statusDefinitions: Record<
     title: 'macOS native bypass fallback-only',
     message:
       'macOS PROCESS-NAME DIRECT does not have a true native bypass path in this architecture; address-based and learned bypass are used as fallback.'
+  },
+  macos_native_bypass_controller_missing: {
+    severity: 'warning',
+    title: 'macOS native bypass controller missing',
+    message:
+      'The macOS process bypass controller is not available, so PROCESS-NAME DIRECT remains fallback-only.'
+  },
+  macos_native_bypass_control_plane: {
+    severity: 'warning',
+    title: 'macOS native bypass control plane detected',
+    message:
+      'The macOS process bypass controller is detected, but it has not reported an active native data plane.'
+  },
+  macos_native_bypass_user_approval_required: {
+    severity: 'warning',
+    title: 'macOS native bypass approval required',
+    message:
+      'The macOS Network/System Extension path needs installation and user approval before it can become native process bypass.'
+  },
+  macos_native_bypass_data_plane_pending: {
+    severity: 'warning',
+    title: 'macOS native bypass data plane pending',
+    message:
+      'The macOS controller/provider contract is visible, but true process bypass remains disabled until dataPlaneActive is confirmed.'
+  },
+  macos_native_bypass_active: {
+    severity: 'info',
+    title: 'macOS native bypass active',
+    message:
+      'The macOS Network/System Extension controller reported an active process-aware bypass data plane.'
   },
   udp_supported: {
     severity: 'info',

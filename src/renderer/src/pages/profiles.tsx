@@ -4,7 +4,8 @@ import BasePage from '@renderer/components/base/base-page'
 import ProfileItem from '@renderer/components/profiles/profile-item'
 import EditInfoModal from '@renderer/components/profiles/edit-info-modal'
 import { useProfileConfig } from '@renderer/hooks/use-profile-config'
-import { readTextFile } from '@renderer/utils/ipc'
+import { mihomoHotReloadConfig, readTextFile } from '@renderer/utils/ipc'
+import { appendRuBundleToProfile } from '@renderer/utils/profile-rule-patches'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DndContext,
@@ -16,7 +17,7 @@ import {
 } from '@dnd-kit/core'
 import { SortableContext } from '@dnd-kit/sortable'
 import { useTranslation } from 'react-i18next'
-import { Plus, FileDown, RefreshCcw } from 'lucide-react'
+import { Database, Plus, FileDown, RefreshCcw, X } from 'lucide-react'
 
 const emptyItems: ProfileItem[] = []
 
@@ -39,6 +40,7 @@ const Profiles: React.FC = () => {
   const [fileOver, setFileOver] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingItem, setEditingItem] = useState<ProfileItem | null>(null)
+  const [ruBundlePromptProfile, setRuBundlePromptProfile] = useState<ProfileItem | null>(null)
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -109,7 +111,14 @@ const Profiles: React.FC = () => {
         try {
           const path = window.api.webUtils.getPathForFile(file)
           const content = await readTextFile(path)
-          await addProfileItemRef.current({ name: file.name, type: 'local', file: content })
+          const importedProfile = await addProfileItemRef.current({
+            name: file.name,
+            type: 'local',
+            file: content
+          })
+          if (importedProfile) {
+            setRuBundlePromptProfile(importedProfile)
+          }
         } catch (e) {
           toast.error(tRef.current('pages.profiles.fileImportFailed') + e)
         }
@@ -138,6 +147,12 @@ const Profiles: React.FC = () => {
     setSortedItems(itemsArray)
   }, [itemsArray])
 
+  useEffect(() => {
+    if (ruBundlePromptProfile && !itemsArray.some((item) => item.id === ruBundlePromptProfile.id)) {
+      setRuBundlePromptProfile(null)
+    }
+  }, [itemsArray, ruBundlePromptProfile])
+
   const handleAddProfile = (): void => {
     const newProfile: ProfileItem = {
       id: '',
@@ -149,6 +164,25 @@ const Profiles: React.FC = () => {
     }
     setEditingItem(newProfile)
     setShowEditModal(true)
+  }
+
+  const handleAddRuBundle = async (): Promise<void> => {
+    if (!ruBundlePromptProfile) return
+
+    try {
+      const added = await appendRuBundleToProfile(ruBundlePromptProfile.id, 'DIRECT')
+      if (ruBundlePromptProfile.id === current) {
+        await mihomoHotReloadConfig()
+      }
+      toast.success(
+        added
+          ? t('pages.profiles.ruBundlePromptAdded', { name: ruBundlePromptProfile.name })
+          : t('pages.profiles.ruBundlePromptAlreadyAdded', { name: ruBundlePromptProfile.name })
+      )
+      setRuBundlePromptProfile(null)
+    } catch (e) {
+      toast.error(`${e}`)
+    }
   }
 
   return (
@@ -198,17 +232,50 @@ const Profiles: React.FC = () => {
           item={editingItem}
           isCurrent={editingItem.id === current}
           updateProfileItem={async (item: ProfileItem) => {
-            await addProfileItem(item)
+            return await addProfileItem(item)
           }}
-          onImported={() => {
+          onImported={(item) => {
             mutateProfileConfig()
             window.electron.ipcRenderer.send('updateTrayMenu')
+            if (item) {
+              setRuBundlePromptProfile(item)
+            }
           }}
           onClose={() => {
             setShowEditModal(false)
             setEditingItem(null)
           }}
         />
+      )}
+
+      {ruBundlePromptProfile && (
+        <div className="mx-2 mb-2 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2">
+          <div className="min-w-0 flex items-start gap-2">
+            <Database className="mt-0.5 size-4 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <div className="text-sm font-medium">{t('pages.profiles.ruBundlePromptTitle')}</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {t('pages.profiles.ruBundlePromptDescription', {
+                  name: ruBundlePromptProfile.name
+                })}
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button size="sm" variant="secondary" className="gap-1.5" onClick={handleAddRuBundle}>
+              <Database className="size-3.5" />
+              {t('pages.profiles.ruBundlePromptAction')}
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t('pages.profiles.ruBundlePromptDismiss')}
+              onClick={() => setRuBundlePromptProfile(null)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        </div>
       )}
 
       {/* File drop overlay */}
@@ -253,7 +320,9 @@ const Profiles: React.FC = () => {
                 <ProfileItem
                   key={item.id}
                   isCurrent={item.id === current}
-                  addProfileItem={addProfileItem}
+                  addProfileItem={async (profileItem) => {
+                    await addProfileItem(profileItem)
+                  }}
                   removeProfileItem={removeProfileItem}
                   updateProfileItem={updateProfileItem}
                   info={item}

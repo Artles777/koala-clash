@@ -23,7 +23,10 @@ import { getAmneziaHelperRules } from '../config/amneziaHelperRules'
 import { injectAmneziaHelperTunBypass } from '../../core/routing/amnezia-helper-tun-bypass'
 import { getActiveAmneziaHelperTunBypass } from '../runtime/amnezia-helper-tun-bypass-state'
 import { ensureAmneziaTunRuntimeCompatibility } from '../../core/routing/amnezia-tun-runtime-compatibility'
-import { ensureMihomoRuleProviderPresets } from '../../core/routing/mihomo-rule-provider-presets'
+import {
+  ensureMihomoRuleProviderPresets,
+  pinKoalaRuBundleRulesLast
+} from '../../core/routing/mihomo-rule-provider-presets'
 import { injectDirectTunBypass, parseDirectRules } from '../../core/routing/direct-tun-bypass'
 import { resolveRuntimeDirectTunBypass } from '../runtime/direct-tun-bypass-resolver'
 import { updateDirectTunBypassState } from '../runtime/direct-tun-bypass-state'
@@ -152,6 +155,7 @@ export async function generateProfile(): Promise<void> {
         })
       }
 
+      rules = pinKoalaRuBundleRulesLast(rules)
       currentProfile.rules = rules as unknown as []
     }
   }

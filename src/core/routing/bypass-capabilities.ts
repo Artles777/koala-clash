@@ -21,11 +21,15 @@ export type NativeProcessBypassStatus =
   | 'active'
   | 'blocked'
 
-export type NativeProcessBypassMechanism = 'linux-cgroup-fwmark' | 'windows-wfp-service'
+export type NativeProcessBypassMechanism =
+  | 'linux-cgroup-fwmark'
+  | 'windows-wfp-service'
+  | 'macos-transparent-proxy-system-extension'
 export type NativeProcessBypassPlatformMode =
   | 'linux_native'
   | 'windows_wfp_service'
   | 'windows_scaffold'
+  | 'macos_transparent_proxy'
   | 'macos_fallback_only'
   | 'unsupported'
 export type LinuxNativeProcessBypassPrerequisiteStatus =
@@ -34,13 +38,17 @@ export type LinuxNativeProcessBypassPrerequisiteStatus =
   | 'insufficient_privileges'
   | 'not_linux'
   | 'not_windows'
+  | 'not_macos'
   | 'partially_supported'
   | 'windows_service_missing'
+  | 'macos_controller_missing'
+  | 'macos_user_approval_required'
   | 'implementation_pending'
   | 'fallback_only'
 export type LinuxNativeProcessBypassIssueCode =
   | 'not_linux'
   | 'not_windows'
+  | 'not_macos'
   | 'cgroup_v2_missing'
   | 'nft_missing'
   | 'ip_missing'
@@ -53,6 +61,15 @@ export type LinuxNativeProcessBypassIssueCode =
   | 'windows_data_plane_inactive'
   | 'windows_apply_failed'
   | 'windows_cleanup_failed'
+  | 'macos_controller_missing'
+  | 'macos_entitlements_missing'
+  | 'macos_extension_not_installed'
+  | 'macos_user_approval_required'
+  | 'macos_data_plane_pending'
+  | 'macos_data_plane_active'
+  | 'macos_apply_failed'
+  | 'macos_cleanup_failed'
+  | 'macos_cleanup_complete'
   | 'macos_native_bypass_unsupported'
   | 'no_process_names'
   | 'no_matching_processes'
@@ -98,6 +115,15 @@ export interface NativeProcessBypassCapability {
   windowsControllerAvailable?: boolean
   windowsSessionId?: string
   windowsAppliedProcessCount?: number
+  macosControllerAvailable?: boolean
+  macosEntitlementsPresent?: boolean
+  macosExtensionInstalled?: boolean
+  macosUserApprovalRequired?: boolean
+  macosReasonCode?: string
+  macosProvider?: string
+  macosProviderBundleIdentifier?: string
+  macosSessionId?: string
+  macosAppliedProcessCount?: number
 }
 
 export interface RuleBypassCapability {

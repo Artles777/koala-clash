@@ -100,7 +100,7 @@ export async function updateProfileItem(item: ProfileItem): Promise<void> {
   await setProfileConfig(config)
 }
 
-export async function addProfileItem(item: Partial<ProfileItem>): Promise<void> {
+export async function addProfileItem(item: Partial<ProfileItem>): Promise<ProfileItem> {
   if (item.url && item.type === 'remote') {
     const config = await getProfileConfig()
     const duplicate = config.items?.find(
@@ -124,6 +124,8 @@ export async function addProfileItem(item: Partial<ProfileItem>): Promise<void> 
   if (!isExisting || !config.current) {
     await changeCurrentProfile(newItem.id)
   }
+
+  return newItem
 }
 
 export async function removeProfileItem(id: string): Promise<void> {

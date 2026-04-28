@@ -155,7 +155,7 @@ export async function changeCurrentProfile(id: string): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('changeCurrentProfile', id))
 }
 
-export async function addProfileItem(item: Partial<ProfileItem>): Promise<void> {
+export async function addProfileItem(item: Partial<ProfileItem>): Promise<ProfileItem> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('addProfileItem', item))
 }
 

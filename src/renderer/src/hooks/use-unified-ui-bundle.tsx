@@ -15,6 +15,7 @@ import {
 
 interface UnifiedUiBundleHook {
   bundle: UnifiedUiBundle
+  amneziaSupport?: AmneziaHelperDiagnosticsBundle
   mutateMihomoRules: () => void
   mutateAmneziaRulePacks: KeyedMutator<AmneziaHelperRulePack[]>
   mutateAmneziaStatus: KeyedMutator<AmneziaHelperSession | undefined>
@@ -70,6 +71,7 @@ export function useUnifiedUiBundle(requestedRuleScopeId?: UnifiedRuleScopeId): U
 
   return {
     bundle,
+    amneziaSupport,
     mutateMihomoRules,
     mutateAmneziaRulePacks,
     mutateAmneziaStatus,

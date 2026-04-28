@@ -671,6 +671,7 @@ type NativeProcessBypassPlatformMode =
   | 'linux_native'
   | 'windows_wfp_service'
   | 'windows_scaffold'
+  | 'macos_transparent_proxy'
   | 'macos_fallback_only'
   | 'unsupported'
 type LinuxNativeProcessBypassPrerequisiteStatus =
@@ -679,8 +680,11 @@ type LinuxNativeProcessBypassPrerequisiteStatus =
   | 'insufficient_privileges'
   | 'not_linux'
   | 'not_windows'
+  | 'not_macos'
   | 'partially_supported'
   | 'windows_service_missing'
+  | 'macos_controller_missing'
+  | 'macos_user_approval_required'
   | 'implementation_pending'
   | 'fallback_only'
 type AmneziaHelperTunDnsEnhancedMode = 'fake-ip' | 'redir-host' | 'normal' | 'unknown'
@@ -744,6 +748,11 @@ type AmneziaHelperSupportStatusCode =
   | 'windows_native_bypass_active'
   | 'windows_native_bypass_apply_failed'
   | 'macos_native_bypass_fallback_only'
+  | 'macos_native_bypass_controller_missing'
+  | 'macos_native_bypass_control_plane'
+  | 'macos_native_bypass_user_approval_required'
+  | 'macos_native_bypass_data_plane_pending'
+  | 'macos_native_bypass_active'
   | 'udp_supported'
   | 'udp_tcp_only'
 
@@ -953,7 +962,10 @@ interface AmneziaHelperTunSupportSnapshot {
   nativeProcessBypassRequiresPrivileges: boolean
   nativeProcessBypassRequiresService: boolean
   nativeProcessBypassStatus: NativeProcessBypassStatus
-  nativeProcessBypassMechanism?: 'linux-cgroup-fwmark' | 'windows-wfp-service'
+  nativeProcessBypassMechanism?:
+    | 'linux-cgroup-fwmark'
+    | 'windows-wfp-service'
+    | 'macos-transparent-proxy-system-extension'
   nativeProcessBypassPlatformMode?: NativeProcessBypassPlatformMode
   nativeProcessBypassNativeDataPlaneActive: boolean
   nativeProcessBypassFallbackOnly: boolean
@@ -971,6 +983,15 @@ interface AmneziaHelperTunSupportSnapshot {
   nativeProcessBypassWindowsControllerAvailable?: boolean
   nativeProcessBypassWindowsSessionId?: string
   nativeProcessBypassWindowsAppliedProcessCount?: number
+  nativeProcessBypassMacosControllerAvailable?: boolean
+  nativeProcessBypassMacosEntitlementsPresent?: boolean
+  nativeProcessBypassMacosExtensionInstalled?: boolean
+  nativeProcessBypassMacosUserApprovalRequired?: boolean
+  nativeProcessBypassMacosReasonCode?: string
+  nativeProcessBypassMacosProvider?: string
+  nativeProcessBypassMacosProviderBundleIdentifier?: string
+  nativeProcessBypassMacosSessionId?: string
+  nativeProcessBypassMacosAppliedProcessCount?: number
   processDirectEffectiveBypassMode: EffectiveBypassMode
   bypassCapabilityWarnings: string[]
   bypassCapabilitySummary: {
@@ -1086,6 +1107,13 @@ interface AmneziaHelperSupportSummaryExport {
     | 'nativeProcessBypassWindowsServiceAvailable'
     | 'nativeProcessBypassWindowsControllerAvailable'
     | 'nativeProcessBypassWindowsAppliedProcessCount'
+    | 'nativeProcessBypassMacosControllerAvailable'
+    | 'nativeProcessBypassMacosEntitlementsPresent'
+    | 'nativeProcessBypassMacosExtensionInstalled'
+    | 'nativeProcessBypassMacosUserApprovalRequired'
+    | 'nativeProcessBypassMacosReasonCode'
+    | 'nativeProcessBypassMacosProvider'
+    | 'nativeProcessBypassMacosAppliedProcessCount'
     | 'processDirectEffectiveBypassMode'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'

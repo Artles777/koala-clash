@@ -31,7 +31,10 @@ import {
   setUnifiedManagedRulesEnabled,
   setUnifiedManagedRuleEnabled
 } from '../src/core/ui/unified-rule-management'
-import { createKoalaRuBundleRule } from '../src/core/routing/mihomo-rule-provider-presets'
+import {
+  createKoalaRuBundleRule,
+  pinKoalaRuBundleRulesLast
+} from '../src/core/routing/mihomo-rule-provider-presets'
 
 describe('unified UI view models', () => {
   it('maps mixed Mihomo and Amnezia profiles into one presentation list', () => {
@@ -341,6 +344,36 @@ describe('unified UI view models', () => {
     assert.equal(plan.userFacingTarget, 'VPN / PROXY')
   })
 
+  it('pins RU bundle rules at the end of managed and runtime rule order', () => {
+    const added = appendUnifiedManagedRule(
+      {
+        ...createEmptyUnifiedRulePatchFile(),
+        prepend: ['DOMAIN-SUFFIX,linkedin.com,DIRECT']
+      },
+      'RULE-SET,ru-bundle,PROXY'
+    )
+    assert.equal(added.added, true)
+    assert.deepEqual(added.patch.prepend, ['DOMAIN-SUFFIX,linkedin.com,DIRECT'])
+    assert.deepEqual(added.patch.append, ['RULE-SET,ru-bundle,PROXY'])
+
+    const patch = dedupeUnifiedRulePatchFile({
+      ...createEmptyUnifiedRulePatchFile(),
+      prepend: ['RULE-SET,ru-bundle,PROXY', 'DOMAIN-SUFFIX,linkedin.com,DIRECT'],
+      append: ['IP-CIDR,95.161.76.100/32,DIRECT']
+    })
+
+    assert.deepEqual(patch.prepend, ['DOMAIN-SUFFIX,linkedin.com,DIRECT'])
+    assert.deepEqual(patch.append, ['IP-CIDR,95.161.76.100/32,DIRECT', 'RULE-SET,ru-bundle,PROXY'])
+    assert.deepEqual(
+      pinKoalaRuBundleRulesLast([
+        'RULE-SET,ru-bundle,DIRECT',
+        'DOMAIN-SUFFIX,linkedin.com,DIRECT',
+        'RULE-SET,ru-bundle,PROXY'
+      ]),
+      ['DOMAIN-SUFFIX,linkedin.com,DIRECT', 'RULE-SET,ru-bundle,PROXY']
+    )
+  })
+
   it('keeps AMNEZIA_HELPER internal in user-facing rule models', () => {
     assert.equal(isUserFacingRuleTarget('AMNEZIA_HELPER'), false)
     assert.equal(getUnifiedRuleDisplayTarget('amnezia', 'AMNEZIA_HELPER'), 'VPN / PROXY')
@@ -632,21 +665,24 @@ describe('unified UI view models', () => {
       ...createEmptyUnifiedRulePatchFile(),
       prepend: [
         'DOMAIN-SUFFIX,linkedin.com,PROXY',
-        'RULE-SET,ru-bundle,PROXY',
+        'DOMAIN-SUFFIX,youtube.com,PROXY',
         'PROCESS-NAME,Telegram,DIRECT'
-      ]
+      ],
+      append: ['RULE-SET,ru-bundle,PROXY']
     }
 
     const movedUp = moveUnifiedManagedRule(patch, 'prepend', 2, 'up')
     assert.deepEqual(movedUp.prepend, [
       'DOMAIN-SUFFIX,linkedin.com,PROXY',
       'PROCESS-NAME,Telegram,DIRECT',
-      'RULE-SET,ru-bundle,PROXY'
+      'DOMAIN-SUFFIX,youtube.com,PROXY'
     ])
 
     const movedDown = moveUnifiedManagedRule(movedUp, 'prepend', 1, 'down')
     assert.deepEqual(movedDown.prepend, patch.prepend)
+    assert.deepEqual(movedDown.append, ['RULE-SET,ru-bundle,PROXY'])
     assert.deepEqual(moveUnifiedManagedRule(patch, 'prepend', 0, 'up').prepend, patch.prepend)
+    assert.deepEqual(moveUnifiedManagedRule(patch, 'append', 0, 'up').append, patch.append)
   })
 
   it('bulk duplicates selected rules to an owner with owner-safe target validation', () => {

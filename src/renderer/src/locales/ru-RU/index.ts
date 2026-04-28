@@ -195,6 +195,13 @@ export default {
       emptyDescription: 'Добавьте профиль, чтобы начать',
       addProfile: 'Добавить профиль',
       dropFileHint: 'Перетащите файл конфигурации сюда',
+      ruBundlePromptTitle: 'Следующий шаг: RU bundle',
+      ruBundlePromptDescription:
+        'Добавить ru-bundle в профиль {{name}}, чтобы русскоязычные сайты по умолчанию шли через DIRECT.',
+      ruBundlePromptAction: 'Добавить RU bundle',
+      ruBundlePromptDismiss: 'Не сейчас',
+      ruBundlePromptAdded: 'RU bundle добавлен в профиль {{name}}',
+      ruBundlePromptAlreadyAdded: 'RU bundle уже есть в профиле {{name}}',
       hwidLimitTitle: 'Лимит устройств превышен',
       hwidLimitDescription:
         'Достигнут максимальный лимит устройств для данной подписки. Подписка не была добавлена или обновлена.',
@@ -254,6 +261,55 @@ export default {
       ownerVpn: 'VPN',
       currentOwner: 'текущий',
       actionVpnProxy: 'VPN / PROXY',
+      bypassTrue: 'Полный обход',
+      bypassPartial: 'Частичный обход',
+      bypassLearned: 'Learned bypass',
+      bypassDirectOnly: 'Только DIRECT',
+      bypassFallbackOnly: 'Только fallback',
+      bypassUnsupported: 'Без TUN-обхода',
+      bypassHintTunDisabled: 'TUN выключен; правило работает как обычный DIRECT.',
+      bypassHintAddressExcluded: 'IP-CIDR правило добавлено во временные TUN-исключения.',
+      bypassHintAddressPartial: 'Для адресного правила активен частичный TUN-обход.',
+      bypassHintAddressBlocked: 'Адресное правило не удалось добавить в TUN-исключения.',
+      bypassHintAddressNotActive: 'Сейчас это правило работает только как DIRECT внутри Mihomo.',
+      bypassHintDomainExcluded: 'Домен зарезолвен и добавлен во временные TUN-исключения.',
+      bypassHintDomainPartial: 'Домен обходится через резолв IP; покрытие может быть частичным.',
+      bypassHintDomainUnresolved: 'Домен не удалось зарезолвить для TUN-исключения.',
+      bypassHintDomainNotResolved: 'Домен пока не превращён в активные TUN-исключения.',
+      bypassHintDomainSuffixPartial:
+        'DOMAIN-SUFFIX обходится только через резолв IP, поэтому покрытие частичное.',
+      bypassHintDomainSuffixUnresolved:
+        'Суффикс не удалось превратить во временные TUN-исключения.',
+      bypassHintDomainSuffixNotResolved:
+        'Суффикс работает как DIRECT внутри Mihomo, пока IP не зарезолвлены/исключены.',
+      bypassHintDomainKeywordUnsupported:
+        'DOMAIN-KEYWORD нельзя безопасно превратить в детерминированные TUN-исключения.',
+      bypassHintProcessLinuxActive:
+        'Linux native process bypass активен для этого PROCESS-NAME правила.',
+      bypassHintProcessWindowsActive:
+        'Windows WFP process bypass сообщает активный data plane для этого правила.',
+      bypassHintProcessMacosActive:
+        'macOS native process bypass сообщает активный data plane для этого правила.',
+      bypassHintProcessNativeActive: 'Native process bypass активен для этого правила.',
+      bypassHintProcessLearnedActive:
+        'Наблюдённые IP процесса добавлены как best-effort TUN-исключения.',
+      bypassHintProcessLearnedObserving:
+        'Наблюдённых IP пока нет; создайте трафик или используйте IP-CIDR/DOMAIN правила.',
+      bypassHintProcessLearnedStale:
+        'Learned IP устарели; сейчас правило остаётся обычным DIRECT внутри Mihomo.',
+      bypassHintProcessMacosFallback:
+        'На macOS PROCESS-NAME DIRECT работает только через fallback, пока нет реального native data plane.',
+      bypassHintProcessWindowsControllerMissing:
+        'Для Windows true process bypass нужен koala-process-bypassctl и WFP service.',
+      bypassHintProcessWindowsServiceMissing:
+        'Для Windows true process bypass нужен сервис KoalaProcessBypass.',
+      bypassHintProcessWindowsDataplaneInactive:
+        'Windows service/controller не сообщают активный process bypass data plane.',
+      bypassHintProcessLinuxInactive:
+        'Linux native process bypass не активен; сейчас это обычный DIRECT.',
+      bypassHintProcessNoObservedIps:
+        'У PROCESS-NAME DIRECT нет native bypass и пока нет learned destination IP.',
+      bypassHintUnsupported: 'Этот тип правила нельзя превратить в runtime TUN-исключение.',
       matchRuleValuePlaceholder: 'MATCH не требует адреса: правило применится к остальному трафику',
       addRuBundle: 'RU bundle',
       ruBundleAdded: 'RU bundle добавлен в профиль {{name}} с действием {{action}}',
@@ -1086,6 +1142,10 @@ export default {
     nativeProcessBypassPrerequisites: 'Prerequisites нативного bypass',
     nativeProcessBypassWindowsService: 'Windows WFP service',
     nativeProcessBypassWindowsController: 'Windows WFP controller',
+    nativeProcessBypassMacosController: 'macOS controller',
+    nativeProcessBypassMacosExtension: 'macOS extension установлен',
+    nativeProcessBypassMacosApproval: 'Требуется approval macOS',
+    nativeProcessBypassMacosReason: 'Причина macOS native',
     nativeProcessBypassFallback: 'Fallback нативного bypass',
     nativeProcessBypassPids: 'Отслеживаемые PID',
     nativeProcessBypassReconcile: 'Reconcile PID',

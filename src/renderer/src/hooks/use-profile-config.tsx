@@ -1,4 +1,11 @@
-import React, { createContext, useContext, ReactNode, useEffect, useState, useCallback } from 'react'
+import React, {
+  createContext,
+  useContext,
+  ReactNode,
+  useEffect,
+  useState,
+  useCallback
+} from 'react'
 import { toast } from 'sonner'
 import useSWR from 'swr'
 import {
@@ -14,7 +21,7 @@ interface ProfileConfigContextType {
   profileConfig: ProfileConfig | undefined
   setProfileConfig: (config: ProfileConfig) => Promise<void>
   mutateProfileConfig: () => void
-  addProfileItem: (item: Partial<ProfileItem>) => Promise<void>
+  addProfileItem: (item: Partial<ProfileItem>) => Promise<ProfileItem | undefined>
   updateProfileItem: (item: ProfileItem) => Promise<void>
   removeProfileItem: (id: string) => Promise<void>
   changeCurrentProfile: (id: string) => Promise<void>
@@ -52,9 +59,9 @@ export const ProfileConfigProvider: React.FC<{ children: ReactNode }> = ({ child
     }
   }
 
-  const addProfileItem = async (item: Partial<ProfileItem>): Promise<void> => {
+  const addProfileItem = async (item: Partial<ProfileItem>): Promise<ProfileItem | undefined> => {
     try {
-      await add(item)
+      return await add(item)
     } catch (e) {
       if (`${e}`.includes('HWID_LIMIT')) {
         setHwidLimitErrorFromMessage(`${e}`)
@@ -65,6 +72,8 @@ export const ProfileConfigProvider: React.FC<{ children: ReactNode }> = ({ child
       mutateProfileConfig()
       window.electron.ipcRenderer.send('updateTrayMenu')
     }
+
+    return undefined
   }
 
   const removeProfileItem = async (id: string): Promise<void> => {
