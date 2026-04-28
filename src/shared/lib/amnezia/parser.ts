@@ -43,6 +43,22 @@ type ParsedPayload =
     }
 
 const obfuscationKeys = [
+  'Jc',
+  'Jmin',
+  'Jmax',
+  'S1',
+  'S2',
+  'S3',
+  'S4',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'I1',
+  'I2',
+  'I3',
+  'I4',
+  'I5',
   'junkPacketCount',
   'junkPacketMinSize',
   'junkPacketMaxSize',
@@ -212,7 +228,8 @@ function normalizeAmneziaJsonProfile(
         ...wgProfile.amnezia,
         defaultContainer,
         container: containerName,
-        protocolVersion: asString(protocolConfig?.protocolVersion)
+        protocolVersion: getProtocolVersion(protocolConfig),
+        obfuscation: collectObfuscation(protocolConfig, container)
       }
     }
   }
@@ -251,8 +268,8 @@ function normalizeAmneziaJsonProfile(
     amnezia: {
       defaultContainer,
       container: containerName,
-      protocolVersion: asString(protocolConfig?.protocolVersion),
-      obfuscation: collectObfuscation(configObject)
+      protocolVersion: getProtocolVersion(protocolConfig),
+      obfuscation: collectObfuscation(protocolConfig, configObject)
     }
   })
 }
@@ -396,16 +413,25 @@ function getProfileName(
 }
 
 function collectObfuscation(
-  configObject: Record<string, unknown>
+  ...configObjects: Array<Record<string, unknown> | undefined>
 ): Record<string, string | number | boolean> {
   const result: Record<string, string | number | boolean> = {}
-  for (const key of obfuscationKeys) {
-    const value = configObject[key]
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      result[key] = value
+  for (const configObject of configObjects) {
+    if (!configObject) continue
+    for (const key of obfuscationKeys) {
+      const value = configObject[key]
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        result[key] = value
+      }
     }
   }
   return result
+}
+
+function getProtocolVersion(
+  protocolConfig: Record<string, unknown> | undefined
+): string | undefined {
+  return asString(protocolConfig?.protocolVersion ?? protocolConfig?.protocol_version)
 }
 
 function formatEndpoint(endpoint: NormalizedEndpoint): string {

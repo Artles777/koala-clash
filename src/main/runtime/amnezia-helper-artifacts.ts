@@ -1,6 +1,6 @@
 import { spawnSync } from 'child_process'
 import { createHash } from 'crypto'
-import { existsSync } from 'fs'
+import { existsSync, statSync } from 'fs'
 import { chmod, copyFile, mkdir, readFile, stat, writeFile } from 'fs/promises'
 import * as path from 'path'
 import {
@@ -138,6 +138,21 @@ export function getAmneziaHelperArtifactSourcePath(options: {
   const exists = options.exists ?? existsSync
   const binaryName = getProductionBackendBinaryName(options.target.platform)
   const candidates = [
+    path.join(options.sourceRoot, binaryName),
+    path.join(options.sourceRoot, 'dist', options.target.platform, options.target.arch, binaryName),
+    path.join(
+      options.sourceRoot,
+      'dist',
+      `${options.target.platform}-${options.target.arch}`,
+      binaryName
+    ),
+    path.join(
+      options.sourceRoot,
+      'build',
+      options.target.platform,
+      options.target.arch,
+      binaryName
+    ),
     path.join(
       options.sourceRoot,
       'amnezia-helper',
@@ -155,7 +170,17 @@ export function getAmneziaHelperArtifactSourcePath(options: {
     path.join(options.sourceRoot, `${options.target.platform}-${options.target.arch}`, binaryName)
   ]
 
-  return candidates.find((candidate) => exists(candidate)) ?? candidates[0]
+  return candidates.find((candidate) => isExistingArtifactFile(candidate, exists)) ?? candidates[0]
+}
+
+function isExistingArtifactFile(filePath: string, exists: (filePath: string) => boolean): boolean {
+  if (!exists(filePath)) return false
+  try {
+    return statSync(filePath).isFile()
+  } catch {
+    // Unit tests may inject a virtual exists() predicate for non-real paths.
+    return true
+  }
 }
 
 export function getAmneziaHelperArtifactStagedPath(options: {
@@ -457,7 +482,7 @@ function runArtifactSelfCheck(input: {
   force?: boolean
   timeoutMs?: number
 }): AmneziaHelperArtifactSelfCheckResult {
-  const args = ['self-check']
+  const args = ['version']
   const isRunnableOnCurrentHost =
     input.target.platform === process.platform && input.target.arch === process.arch
   if (!input.force && !isRunnableOnCurrentHost) {

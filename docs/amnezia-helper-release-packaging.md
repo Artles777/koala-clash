@@ -90,7 +90,7 @@ The build is blocked when:
 - the file is not executable on Linux/macOS or not readable on Windows
 - the optional manifest declares a different platform or arch
 - staged validation fails after copy
-- `--self-check` is requested and the helper exits non-zero
+- `--self-check` is requested and the helper `version` command exits non-zero
 
 Validate an already staged layout:
 

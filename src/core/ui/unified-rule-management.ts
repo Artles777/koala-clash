@@ -1,5 +1,6 @@
 import {
   getUnifiedRuleDisplayTarget,
+  isHiddenUnifiedRuntimeRule,
   isUserFacingRuleTarget,
   normalizeUnifiedRuleType,
   UnifiedRuleItem,
@@ -109,7 +110,8 @@ export function serializeUnifiedRuleDraft(draft: UnifiedRuleDraft): string {
   if (!target) throw new Error('Rule target is required')
   if (!isUserFacingRuleTarget(target))
     throw new Error('Internal helper targets are not user editable')
-  return [type, value, target].filter((part) => part !== '').join(',')
+  if (type === 'MATCH') return `${type},${target}`
+  return `${type},${value},${target}`
 }
 
 export function appendUnifiedManagedRule(
@@ -168,7 +170,7 @@ export function createUnifiedRulesForDisplay(input: {
 }): UnifiedRuleItem[] {
   const managedKeys = new Set(input.managedRules.map((rule) => getRuleIdentityKey(rule)))
   const runtimeOnlyRules = input.runtimeRules.filter(
-    (rule) => !managedKeys.has(getRuleIdentityKey(rule))
+    (rule) => !isHiddenUnifiedRuntimeRule(rule) && !managedKeys.has(getRuleIdentityKey(rule))
   )
   return [...input.managedRules, ...runtimeOnlyRules]
 }
@@ -191,6 +193,28 @@ export function removeUnifiedManagedRule(
 ): UnifiedRulePatchFile {
   const next = clonePatch(patch)
   next[section] = removeAt(next[section], index)
+  return next
+}
+
+export function moveUnifiedManagedRule(
+  patch: UnifiedRulePatchFile,
+  section: UnifiedRulePatchSection,
+  index: number,
+  direction: 'up' | 'down'
+): UnifiedRulePatchFile {
+  const next = clonePatch(patch)
+  const targetIndex = direction === 'up' ? index - 1 : index + 1
+  const sectionRules = next[section]
+
+  if (index < 0 || index >= sectionRules.length) return next
+  if (targetIndex < 0 || targetIndex >= sectionRules.length) return next
+
+  const currentRule = sectionRules[index]
+  const targetRule = sectionRules[targetIndex]
+  if (currentRule === undefined || targetRule === undefined) return next
+
+  sectionRules[index] = targetRule
+  sectionRules[targetIndex] = currentRule
   return next
 }
 
@@ -416,8 +440,18 @@ function mapPatchSection(
 
 function parseRuleString(rule: string): ParsedRule {
   const parts = rule.split(',').map((part) => part.trim())
+  const type = normalizeUnifiedRuleType(parts[0] ?? '')
+  if (type === 'MATCH') {
+    return {
+      type,
+      value: '',
+      target: parts[1] ?? '',
+      additionalParams: parts.slice(2)
+    }
+  }
+
   return {
-    type: parts[0] ?? '',
+    type,
     value: parts[1] ?? '',
     target: parts[2] ?? '',
     additionalParams: parts.slice(3)
@@ -493,6 +527,7 @@ function createPatchRuleSet(patch: UnifiedRulePatchFile): Set<string> {
 }
 
 function parseBulkRuleEntries(text: string, fallbackType: string): UnifiedBulkImportEntry[] {
+  const normalizedFallbackType = normalizeUnifiedRuleType(fallbackType)
   const parsedDocument = parseRulesExportDocument(text)
   if (parsedDocument) {
     return parsedDocument.rules
@@ -501,6 +536,10 @@ function parseBulkRuleEntries(text: string, fallbackType: string): UnifiedBulkIm
         value: typeof rule.value === 'string' ? rule.value.trim() : ''
       }))
       .filter((entry) => entry.type.length > 0 || entry.value.length > 0)
+  }
+
+  if (normalizedFallbackType === 'MATCH') {
+    return [{ type: normalizedFallbackType, value: '' }]
   }
 
   return text
@@ -524,20 +563,26 @@ function parseRulesExportDocument(
 }
 
 function validateBulkRuleValue(type: string, value: string): string | undefined {
+  if (normalizeUnifiedRuleType(type) === 'MATCH') return undefined
   if (!value) return 'empty_value'
-  if (/\s/.test(value)) return 'contains_whitespace'
   if (value.includes(',')) return 'contains_comma'
 
   switch (type) {
+    case 'PROCESS-NAME':
+      return value.length <= 255 ? undefined : 'process_name_too_long'
     case 'IP-CIDR':
+      if (/\s/.test(value)) return 'contains_whitespace'
       return isValidIpv4Cidr(value) ? undefined : 'invalid_ipv4_cidr'
     case 'DOMAIN':
     case 'DOMAIN-SUFFIX':
+      if (/\s/.test(value)) return 'contains_whitespace'
       if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return 'domain_contains_scheme'
       return isLikelyDomainValue(value) ? undefined : 'invalid_domain'
     case 'DOMAIN-KEYWORD':
+      if (/\s/.test(value)) return 'contains_whitespace'
       return value.length > 0 ? undefined : 'empty_value'
     default:
+      if (/\s/.test(value)) return 'contains_whitespace'
       return undefined
   }
 }

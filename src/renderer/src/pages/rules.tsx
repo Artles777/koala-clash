@@ -28,6 +28,7 @@ import {
   createUnifiedRuleSavePlan,
   getUnifiedRuleDisplayTarget,
   isUserFacingRuleTarget,
+  normalizeUnifiedRuleType,
   resolveDefaultRuleOwnerId,
   UnifiedRuleItem,
   UnifiedRuleOwner,
@@ -35,6 +36,10 @@ import {
   UnifiedStatusLevel,
   UnifiedUiBundle
 } from '../../../core/ui/unified-ui'
+import {
+  createKoalaRuBundleRule,
+  KOALA_RU_BUNDLE_RULE_PROVIDER_NAME
+} from '../../../core/routing/mihomo-rule-provider-presets'
 import {
   createEmptyUnifiedRulePatchFile,
   createUnifiedRulesForDisplay,
@@ -46,6 +51,7 @@ import {
   importUnifiedRulesToPatch,
   isUnifiedManagedRuleSelectable,
   mapRulePatchesToUnifiedRules,
+  moveUnifiedManagedRule,
   normalizeUnifiedRulePatchFile,
   removeUnifiedManagedRules,
   removeUnifiedManagedRule,
@@ -55,15 +61,30 @@ import {
   setUnifiedManagedRuleEnabled,
   UnifiedRulePatchFile
 } from '../../../core/ui/unified-rule-management'
-import { Copy, Database, Download, Pencil, Plus, Save, Trash2, Upload, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Copy,
+  Database,
+  Download,
+  Pencil,
+  Plus,
+  Save,
+  Trash2,
+  Upload,
+  X
+} from 'lucide-react'
 import { toast } from 'sonner'
 
-const helperRuleTypes: AmneziaHelperRuleType[] = [
+const unifiedRuleTypes = [
   'DOMAIN-SUFFIX',
   'DOMAIN',
   'DOMAIN-KEYWORD',
-  'IP-CIDR'
-]
+  'IP-CIDR',
+  'PROCESS-NAME',
+  'RULE-SET',
+  'MATCH'
+] as const
 
 const commonMihomoTargets = ['PROXY', 'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE']
 const vpnTargets = ['PROXY', 'DIRECT', 'REJECT']
@@ -79,7 +100,7 @@ const Rules: React.FC = () => {
   const [showRulesEditor, setShowRulesEditor] = useState(false)
   const [viewScope, setViewScope] = useState<UnifiedRuleViewScopeId>('all')
   const [selectedOwnerId, setSelectedOwnerId] = useState('')
-  const [newRuleType, setNewRuleType] = useState<AmneziaHelperRuleType>('DOMAIN-SUFFIX')
+  const [newRuleType, setNewRuleType] = useState<string>('DOMAIN-SUFFIX')
   const [newRuleValue, setNewRuleValue] = useState('')
   const [newRuleTarget, setNewRuleTarget] = useState('PROXY')
   const [editingRule, setEditingRule] = useState<UnifiedRuleItem | undefined>()
@@ -206,20 +227,22 @@ const Rules: React.FC = () => {
 
   const scopeWarnings = useMemo(
     () =>
-      bundle.ruleScopes.filter(
-        (scope) => scope.unavailableReason && (viewScope === 'all' || scope.id === viewScope)
-      ),
+      viewScope === 'all'
+        ? []
+        : bundle.ruleScopes.filter((scope) => scope.unavailableReason && scope.id === viewScope),
     [bundle.ruleScopes, viewScope]
   )
   const ownerUnavailable = !selectedOwner || !selectedOwner.canEditRules
+  const normalizedNewRuleType = normalizeUnifiedRuleType(newRuleType)
+  const ruleRequiresValue = normalizedNewRuleType !== 'MATCH'
   const duplicateRule = useMemo(() => {
-    const value = newRuleValue.trim()
-    if (!value) return false
+    const value = ruleRequiresValue ? newRuleValue.trim() : ''
+    if (ruleRequiresValue && !value) return false
     return allDisplayRules.some(
       (rule) =>
         rule.id !== editingRule?.id &&
         rule.ownerProfileId === selectedOwner?.ownerProfileId &&
-        rule.type === newRuleType &&
+        normalizeUnifiedRuleType(rule.type) === normalizedNewRuleType &&
         rule.value === value &&
         rule.target === newRuleTarget
     )
@@ -229,10 +252,17 @@ const Rules: React.FC = () => {
     newRuleTarget,
     newRuleType,
     newRuleValue,
+    normalizedNewRuleType,
+    ruleRequiresValue,
     selectedOwner?.ownerProfileId
   ])
-  const canAddRule = !rulesBusy && !!newRuleValue.trim() && !ownerUnavailable && !duplicateRule
-  const editableRuleProfileId = selectedOwner?.ownerProfileId
+  const canAddRule =
+    !rulesBusy &&
+    (!ruleRequiresValue || !!newRuleValue.trim()) &&
+    !ownerUnavailable &&
+    !duplicateRule
+  const advancedRuleEditorProfileId =
+    selectedOwner?.ownerType === 'mihomo' ? selectedOwner.ownerProfileId : undefined
   const duplicateOwner = useMemo(
     () => bundle.ruleOwners.find((owner) => owner.id === duplicateOwnerId),
     [bundle.ruleOwners, duplicateOwnerId]
@@ -280,9 +310,15 @@ const Rules: React.FC = () => {
     })
   }, [allDisplayRules])
 
+  useEffect(() => {
+    if (showRulesEditor && !advancedRuleEditorProfileId) {
+      setShowRulesEditor(false)
+    }
+  }, [advancedRuleEditorProfileId, showRulesEditor])
+
   const handleAddRule = async (): Promise<void> => {
-    const value = newRuleValue.trim()
-    if (!value || rulesBusy) return
+    const value = ruleRequiresValue ? newRuleValue.trim() : ''
+    if ((ruleRequiresValue && !value) || rulesBusy) return
 
     if (duplicateRule) {
       toast.error(t('pages.rules.duplicateRule'))
@@ -330,6 +366,39 @@ const Rules: React.FC = () => {
     }
   }
 
+  const handleAddRuBundle = async (): Promise<void> => {
+    if (rulesBusy) return
+
+    if (ownerUnavailable || !selectedOwner) {
+      toast.error(t('pages.rules.ruleOwnerUnavailable'))
+      return
+    }
+
+    setRulesBusy(true)
+    try {
+      const rule = createKoalaRuBundleRule(newRuleTarget)
+      const added = await appendProfileRule(selectedOwner.ownerProfileId, rule)
+      if (!added) {
+        toast.error(t('pages.rules.duplicateRule'))
+        await refreshRuleState()
+        return
+      }
+      toast.success(
+        t('pages.rules.ruBundleAdded', {
+          name: selectedOwner.ownerProfileName,
+          action: getTargetLabel(t, selectedOwner, newRuleTarget)
+        })
+      )
+      await mihomoHotReloadConfig()
+      mutateMihomoRules()
+      await refreshRuleState()
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
   const refreshRuleState = async (): Promise<void> => {
     await Promise.all([
       mutateRulePatches(),
@@ -343,7 +412,7 @@ const Rules: React.FC = () => {
     if (!rule.editable || !rule.ownerProfileId) return
     setEditingRule(rule)
     setSelectedOwnerId(`${rule.ownerType}:${rule.ownerProfileId}`)
-    setNewRuleType(rule.type as AmneziaHelperRuleType)
+    setNewRuleType(rule.type)
     setNewRuleValue(rule.value)
     setNewRuleTarget(rule.target)
   }
@@ -422,6 +491,30 @@ const Rules: React.FC = () => {
       mutateMihomoRules()
       await refreshRuleState()
       toast.success(t('pages.rules.ruleDuplicated', { name: duplicateOwner.ownerProfileName }))
+    } catch (e) {
+      toast.error(`${e}`)
+    } finally {
+      setRulesBusy(false)
+    }
+  }
+
+  const handleMoveRule = async (rule: UnifiedRuleItem, direction: 'up' | 'down'): Promise<void> => {
+    if (!isUnifiedManagedRuleSelectable(rule)) return
+
+    setRulesBusy(true)
+    try {
+      const patch = getOwnerPatch(rule.ownerProfileId)
+      const next = moveUnifiedManagedRule(
+        patch,
+        rule.managedPatchSection,
+        rule.managedPatchIndex,
+        direction
+      )
+      await writeProfileRulePatch(rule.ownerProfileId, next)
+      await mihomoHotReloadConfig()
+      mutateMihomoRules()
+      await refreshRuleState()
+      toast.success(t('pages.rules.ruleMoved'))
     } catch (e) {
       toast.error(`${e}`)
     } finally {
@@ -589,17 +682,25 @@ const Rules: React.FC = () => {
     return rulePatches[profileId] ?? createEmptyUnifiedRulePatchFile()
   }
 
+  const canMoveRule = (rule: UnifiedRuleItem, direction: 'up' | 'down'): boolean => {
+    if (!isUnifiedManagedRuleSelectable(rule)) return false
+    const sectionLength = getOwnerPatch(rule.ownerProfileId)[rule.managedPatchSection].length
+    return direction === 'up'
+      ? rule.managedPatchIndex > 0
+      : rule.managedPatchIndex < sectionLength - 1
+  }
+
   return (
     <BasePage
       title={t('pages.rules.title')}
       header={
         <>
-          {editableRuleProfileId && (
+          {advancedRuleEditorProfileId && (
             <Button
               size="icon-sm"
               variant="ghost"
               className="app-nodrag"
-              title={t('profile.editRule')}
+              title={t('pages.rules.advancedMihomoRuleEditor')}
               onClick={() => setShowRulesEditor(true)}
             >
               <Pencil className="size-4" />
@@ -617,235 +718,269 @@ const Rules: React.FC = () => {
         </>
       }
     >
-      {showRulesEditor && editableRuleProfileId && (
+      {showRulesEditor && advancedRuleEditorProfileId && (
         <EditRulesModal
-          id={editableRuleProfileId}
+          id={advancedRuleEditorProfileId}
           onClose={() => {
             setShowRulesEditor(false)
             mutateMihomoRules()
+            void refreshRuleState()
           }}
         />
       )}
 
       <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-xl">
         <div className="px-2 pb-2 flex flex-col gap-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-1.5">
+          <div className="rounded-lg border border-border bg-card/40 p-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Select
+                  value={viewScope}
+                  onValueChange={(value) => setViewScope(value as UnifiedRuleViewScopeId)}
+                >
+                  <SelectTrigger size="sm" className="w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t('pages.rules.scopeAll')}</SelectItem>
+                    {bundle.ruleScopes.map((scope) => (
+                      <SelectItem key={scope.id} value={scope.id}>
+                        {t(scope.titleKey)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <RuleCountBadges bundle={bundle} rules={allDisplayRules} />
+              </div>
+              <UnifiedStatusBadges bundle={bundle} />
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <Select
-                value={viewScope}
-                onValueChange={(value) => setViewScope(value as UnifiedRuleViewScopeId)}
+                value={selectedOwnerId}
+                onValueChange={setSelectedOwnerId}
+                disabled={Boolean(editingRule)}
+              >
+                <SelectTrigger size="sm" className="w-56">
+                  <SelectValue placeholder={t('pages.rules.selectRuleOwner')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {bundle.ruleOwners.map((owner) => (
+                    <SelectItem key={owner.id} value={owner.id}>
+                      {getOwnerLabel(t, owner)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={newRuleType}
+                onValueChange={(value) => {
+                  setNewRuleType(value)
+                  if (normalizeUnifiedRuleType(value) === 'MATCH') setNewRuleValue('')
+                }}
+              >
+                <SelectTrigger size="sm" className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {unifiedRuleTypes.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                className="h-8 min-w-60 flex-1 text-sm"
+                value={newRuleValue}
+                placeholder={
+                  ruleRequiresValue
+                    ? t('profile.helperRuleValuePlaceholder')
+                    : t('pages.rules.matchRuleValuePlaceholder')
+                }
+                disabled={!ruleRequiresValue}
+                onChange={(e) => setNewRuleValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleAddRule()
+                  }
+                }}
+              />
+              <Select value={newRuleTarget} onValueChange={setNewRuleTarget}>
+                <SelectTrigger size="sm" className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {targetOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button size="sm" className="gap-1.5" disabled={!canAddRule} onClick={handleAddRule}>
+                {editingRule ? <Save className="size-4" /> : <Plus className="size-4" />}
+                {editingRule ? t('pages.rules.saveRule') : t('pages.rules.addRule')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={rulesBusy || ownerUnavailable}
+                title={KOALA_RU_BUNDLE_RULE_PROVIDER_NAME}
+                onClick={handleAddRuBundle}
+              >
+                <Database className="size-4" />
+                {t('pages.rules.addRuBundle')}
+              </Button>
+              {editingRule && (
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={handleCancelEdit}>
+                  <X className="size-4" />
+                  {t('common.cancel')}
+                </Button>
+              )}
+            </div>
+
+            {(duplicateRule ||
+              ownerUnavailable ||
+              scopeWarnings.length > 0 ||
+              bundle.legacyHelperRules.totalRules > 0) && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                {duplicateRule && (
+                  <span className="text-xs text-warning">{t('pages.rules.duplicateRule')}</span>
+                )}
+                {ownerUnavailable && (
+                  <span className="text-xs text-warning">
+                    {t('pages.rules.ruleOwnerUnavailable')}
+                  </span>
+                )}
+                {scopeWarnings.map((scope) => (
+                  <span key={scope.id} className="text-xs text-muted-foreground">
+                    {getScopeUnavailableText(t, scope.unavailableReason ?? '')}
+                  </span>
+                ))}
+                {bundle.legacyHelperRules.totalRules > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {t('pages.rules.hiddenLegacyHelperRules', {
+                      count: bundle.legacyHelperRules.totalRules,
+                      enabled: bundle.legacyHelperRules.enabledRules
+                    })}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-border bg-card/30 p-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                className="h-8 min-w-60 flex-1 text-sm"
+                value={filter}
+                placeholder={t('common.filter')}
+                onChange={(e) => setFilter(e.target.value)}
+              />
+              <Select
+                value={ownerTypeFilter}
+                onValueChange={(value) => setOwnerTypeFilter(value as 'all' | 'mihomo' | 'amnezia')}
               >
                 <SelectTrigger size="sm" className="w-36">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{t('pages.rules.scopeAll')}</SelectItem>
-                  {bundle.ruleScopes.map((scope) => (
-                    <SelectItem key={scope.id} value={scope.id}>
-                      {t(scope.titleKey)}
+                  <SelectItem value="mihomo">{t('pages.rules.ownerMihomo')}</SelectItem>
+                  <SelectItem value="amnezia">{t('pages.rules.ownerVpn')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={profileFilter} onValueChange={setProfileFilter}>
+                <SelectTrigger size="sm" className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('pages.rules.allProfiles')}</SelectItem>
+                  {bundle.ruleOwners.map((owner) => (
+                    <SelectItem key={owner.id} value={owner.ownerProfileId}>
+                      {getOwnerLabel(t, owner)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <RuleCountBadges bundle={bundle} rules={allDisplayRules} />
+              <Select value={actionFilter} onValueChange={setActionFilter}>
+                <SelectTrigger size="sm" className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('pages.rules.allActions')}</SelectItem>
+                  {actionFilterOptions.map((target) => (
+                    <SelectItem key={target} value={target}>
+                      {getTargetLabel(t, selectedOwner, target)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <UnifiedStatusBadges bundle={bundle} />
-          </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Select
-              value={selectedOwnerId}
-              onValueChange={setSelectedOwnerId}
-              disabled={Boolean(editingRule)}
-            >
-              <SelectTrigger size="sm" className="w-56">
-                <SelectValue placeholder={t('pages.rules.selectRuleOwner')} />
-              </SelectTrigger>
-              <SelectContent>
-                {bundle.ruleOwners.map((owner) => (
-                  <SelectItem key={owner.id} value={owner.id}>
-                    {getOwnerLabel(t, owner)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={newRuleType}
-              onValueChange={(value) => setNewRuleType(value as AmneziaHelperRuleType)}
-            >
-              <SelectTrigger size="sm" className="w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {helperRuleTypes.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {type}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input
-              className="h-8 min-w-60 flex-1 text-sm"
-              value={newRuleValue}
-              placeholder={t('profile.helperRuleValuePlaceholder')}
-              onChange={(e) => setNewRuleValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  handleAddRule()
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={selectableFilteredRuleIds.length === 0}
+                onClick={
+                  allFilteredManagedRulesSelected
+                    ? handleClearSelection
+                    : handleSelectAllFilteredRules
                 }
-              }}
-            />
-            <Select value={newRuleTarget} onValueChange={setNewRuleTarget}>
-              <SelectTrigger size="sm" className="w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {targetOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button size="sm" className="gap-1.5" disabled={!canAddRule} onClick={handleAddRule}>
-              {editingRule ? <Save className="size-4" /> : <Plus className="size-4" />}
-              {editingRule ? t('pages.rules.saveRule') : t('pages.rules.addRule')}
-            </Button>
-            {editingRule && (
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleCancelEdit}>
-                <X className="size-4" />
-                {t('common.cancel')}
+              >
+                {allFilteredManagedRulesSelected
+                  ? t('pages.rules.clearSelection')
+                  : t('pages.rules.selectFiltered')}
               </Button>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={ownerTypeFilter}
-              onValueChange={(value) => setOwnerTypeFilter(value as 'all' | 'mihomo' | 'amnezia')}
-            >
-              <SelectTrigger size="sm" className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('pages.rules.scopeAll')}</SelectItem>
-                <SelectItem value="mihomo">{t('pages.rules.ownerMihomo')}</SelectItem>
-                <SelectItem value="amnezia">{t('pages.rules.ownerVpn')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={profileFilter} onValueChange={setProfileFilter}>
-              <SelectTrigger size="sm" className="w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('pages.rules.allProfiles')}</SelectItem>
-                {bundle.ruleOwners.map((owner) => (
-                  <SelectItem key={owner.id} value={owner.ownerProfileId}>
-                    {getOwnerLabel(t, owner)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={actionFilter} onValueChange={setActionFilter}>
-              <SelectTrigger size="sm" className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('pages.rules.allActions')}</SelectItem>
-                {actionFilterOptions.map((target) => (
-                  <SelectItem key={target} value={target}>
-                    {getTargetLabel(t, selectedOwner, target)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={duplicateOwnerId} onValueChange={setDuplicateOwnerId}>
-              <SelectTrigger size="sm" className="w-52">
-                <SelectValue placeholder={t('pages.rules.duplicateTarget')} />
-              </SelectTrigger>
-              <SelectContent>
-                {bundle.ruleOwners.map((owner) => (
-                  <SelectItem key={owner.id} value={owner.id}>
-                    {getOwnerLabel(t, owner)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input
-              className="h-8 min-w-60 flex-1 text-sm"
-              value={filter}
-              placeholder={t('common.filter')}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-            {duplicateRule && (
-              <span className="text-xs text-warning">{t('pages.rules.duplicateRule')}</span>
-            )}
-            {ownerUnavailable && (
-              <span className="text-xs text-warning">{t('pages.rules.ruleOwnerUnavailable')}</span>
-            )}
-            {scopeWarnings.map((scope) => (
-              <span key={scope.id} className="text-xs text-muted-foreground">
-                {getScopeUnavailableText(t, scope.unavailableReason ?? '')}
-              </span>
-            ))}
-            {bundle.legacyHelperRules.totalRules > 0 && (
+              <Select value={duplicateOwnerId} onValueChange={setDuplicateOwnerId}>
+                <SelectTrigger size="sm" className="w-52">
+                  <SelectValue placeholder={t('pages.rules.duplicateTarget')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {bundle.ruleOwners.map((owner) => (
+                    <SelectItem key={owner.id} value={owner.id}>
+                      {getOwnerLabel(t, owner)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => setShowBulkImport((value) => !value)}
+              >
+                <Upload className="size-4" />
+                {t('pages.rules.bulkImport')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={filteredManagedRules.length === 0}
+                onClick={() => handleExportRules(filteredManagedRules)}
+              >
+                <Download className="size-4" />
+                {t('pages.rules.exportFiltered')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={selectedOwnerManagedRules.length === 0}
+                onClick={() => handleExportRules(selectedOwnerManagedRules)}
+              >
+                <Download className="size-4" />
+                {t('pages.rules.exportOwner')}
+              </Button>
               <span className="text-xs text-muted-foreground">
-                {t('pages.rules.hiddenLegacyHelperRules', {
-                  count: bundle.legacyHelperRules.totalRules,
-                  enabled: bundle.legacyHelperRules.enabledRules
-                })}
+                {t('pages.rules.bulkEditableHint')}
               </span>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={selectableFilteredRuleIds.length === 0}
-              onClick={
-                allFilteredManagedRulesSelected
-                  ? handleClearSelection
-                  : handleSelectAllFilteredRules
-              }
-            >
-              {allFilteredManagedRulesSelected
-                ? t('pages.rules.clearSelection')
-                : t('pages.rules.selectFiltered')}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              onClick={() => setShowBulkImport((value) => !value)}
-            >
-              <Upload className="size-4" />
-              {t('pages.rules.bulkImport')}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              disabled={filteredManagedRules.length === 0}
-              onClick={() => handleExportRules(filteredManagedRules)}
-            >
-              <Download className="size-4" />
-              {t('pages.rules.exportFiltered')}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              disabled={selectedOwnerManagedRules.length === 0}
-              onClick={() => handleExportRules(selectedOwnerManagedRules)}
-            >
-              <Download className="size-4" />
-              {t('pages.rules.exportOwner')}
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {t('pages.rules.bulkEditableHint')}
-            </span>
+            </div>
           </div>
 
           {showBulkImport && (
@@ -960,6 +1095,24 @@ const Rules: React.FC = () => {
                         handleToggleRuleSelection(rule, checked === true)
                       }
                     />
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      disabled={rulesBusy || !canMoveRule(rule, 'up')}
+                      title={t('pages.rules.moveRuleUp')}
+                      onClick={() => handleMoveRule(rule, 'up')}
+                    >
+                      <ArrowUp className="size-4" />
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      disabled={rulesBusy || !canMoveRule(rule, 'down')}
+                      title={t('pages.rules.moveRuleDown')}
+                      onClick={() => handleMoveRule(rule, 'down')}
+                    >
+                      <ArrowDown className="size-4" />
+                    </Button>
                     <Button
                       size="icon-sm"
                       variant="ghost"

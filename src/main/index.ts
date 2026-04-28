@@ -241,7 +241,7 @@ app.on('before-quit', async (e) => {
         quitTimeout = null
       }
       triggerSysProxy(false, false)
-      await stopAllAmneziaHelpers()
+      await stopAllAmneziaHelpers('app_shutdown')
       await stopCore()
       app.exit()
       return
@@ -257,7 +257,7 @@ app.on('before-quit', async (e) => {
         quitTimeout = null
       }
       triggerSysProxy(false, false)
-      await stopAllAmneziaHelpers()
+      await stopAllAmneziaHelpers('app_shutdown')
       await stopCore()
       app.exit()
     }
@@ -268,7 +268,7 @@ app.on('before-quit', async (e) => {
       quitTimeout = null
     }
     triggerSysProxy(false, false)
-    await stopAllAmneziaHelpers()
+    await stopAllAmneziaHelpers('app_shutdown')
     await stopCore()
     app.exit()
   }
@@ -280,7 +280,7 @@ powerMonitor.on('shutdown', async () => {
     quitTimeout = null
   }
   triggerSysProxy(false, false)
-  await stopAllAmneziaHelpers()
+  await stopAllAmneziaHelpers('app_shutdown')
   await stopCore()
   app.exit()
 })

@@ -14,8 +14,17 @@ export type AmneziaHelperBackendConfig = AmneziaHelperRuntimeConfig | AmneziaPro
 export type AmneziaHelperBackendDiagnosticKind =
   | 'config_accepted'
   | 'local_proxy_ready'
+  | 'handshake_pending'
+  | 'handshake_observed'
+  | 'helper_ready'
+  | 'connectivity_verified'
   | 'startup_failed'
   | 'unsupported_config'
+  | 'profile_requires_gateway_expansion'
+  | 'socks_connect_failed'
+  | 'proxy_handshake_failure'
+  | 'upstream_request_failure'
+  | 'validation_timeout'
   | 'backend_unavailable'
   | 'backend_permission_denied'
   | 'backend_spawn_failure'
@@ -75,6 +84,7 @@ export interface AmneziaHelperBackendLaunchContext {
 export interface ResolvedAmneziaHelperBackend {
   mode: AmneziaHelperBackendMode
   kind: AmneziaHelperBackendKind
+  pathSource: 'bundled' | 'override' | 'development'
   command: string
   executablePath: string
   runAsNode: boolean
@@ -153,6 +163,7 @@ export function resolveHelperBackend(
     return {
       mode: 'production',
       kind: validation.ok ? 'production' : 'unavailable',
+      pathSource: resolvedPath.explicit ? 'override' : 'bundled',
       command: resolvedPath.path,
       executablePath: resolvedPath.path,
       runAsNode: false,
@@ -172,18 +183,8 @@ export function resolveHelperBackend(
             `checked paths: ${resolvedPath.candidates.join(', ') || 'none'}`,
             'set KOALA_AMNEZIA_HELPER_BACKEND_PATH or use KOALA_AMNEZIA_HELPER_BACKEND_MODE=proxy-prototype for explicit prototype fallback'
           ],
-      getBackendLaunchArgs: ({ configPath, sessionId, profileId }) => [
-        'run',
-        '--config',
-        configPath,
-        '--session-id',
-        sessionId,
-        '--profile-id',
-        profileId,
-        '--mode',
-        'proxy'
-      ],
-      getBackendSelfCheckArgs: () => ['self-check'],
+      getBackendLaunchArgs: ({ configPath }) => ['run', '--config', configPath],
+      getBackendSelfCheckArgs: () => ['version'],
       generateBackendConfig: createAmneziaProductionBackendConfig
     }
   }
@@ -192,6 +193,7 @@ export function resolveHelperBackend(
     return {
       mode: 'stub',
       kind: 'stub',
+      pathSource: 'development',
       command,
       executablePath: options.helperStubPath,
       runAsNode: true,
@@ -214,6 +216,7 @@ export function resolveHelperBackend(
   return {
     mode: 'proxy-prototype',
     kind: 'prototype',
+    pathSource: 'development',
     command,
     executablePath: options.proxyBackendPath,
     runAsNode: true,
@@ -433,6 +436,9 @@ export function mapExecutableValidationIssueToDiagnosticKind(
 }
 
 export function parseBackendReadiness(message: string): AmneziaHelperBackendDiagnostic | undefined {
+  const event = parseBackendJsonEvent(message)
+  if (event) return mapBackendJsonEventToDiagnostic(event, message)
+
   if (/\bREADY\b/i.test(message) || /local proxy .*ready/i.test(message)) {
     return {
       kind: 'local_proxy_ready',
@@ -446,6 +452,9 @@ export function parseBackendReadiness(message: string): AmneziaHelperBackendDiag
 export function parseBackendDiagnostics(
   message: string
 ): AmneziaHelperBackendDiagnostic | undefined {
+  const event = parseBackendJsonEvent(message)
+  if (event) return mapBackendJsonEventToDiagnostic(event, message)
+
   if (/CONFIG_ACCEPTED|config accepted/i.test(message)) {
     return {
       kind: 'config_accepted',
@@ -510,6 +519,83 @@ export function parseBackendDiagnostics(
       kind: 'startup_failed',
       message
     }
+  }
+
+  return undefined
+}
+
+interface AmneziaHelperBackendJsonEvent {
+  level?: string
+  event?: string
+  code?: string
+  message?: string
+  fields?: Record<string, unknown>
+}
+
+function parseBackendJsonEvent(message: string): AmneziaHelperBackendJsonEvent | undefined {
+  const trimmed = message.trim()
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return undefined
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (!parsed || typeof parsed !== 'object') return undefined
+    return parsed as AmneziaHelperBackendJsonEvent
+  } catch {
+    return undefined
+  }
+}
+
+function mapBackendJsonEventToDiagnostic(
+  event: AmneziaHelperBackendJsonEvent,
+  rawMessage: string
+): AmneziaHelperBackendDiagnostic | undefined {
+  const eventName = event.event ?? ''
+  const code = event.code ?? ''
+  const message = event.message || rawMessage
+
+  switch (eventName) {
+    case 'config.validated':
+    case 'backend.config_mapped':
+      return { kind: 'config_accepted', message }
+    case 'proxy.listening':
+      return { kind: 'local_proxy_ready', message }
+    case 'readiness.handshake_pending':
+      return { kind: 'handshake_pending', message }
+    case 'handshake.observed':
+      return { kind: 'handshake_observed', message }
+    case 'helper.ready':
+      return { kind: 'helper_ready', message }
+    case 'connectivity.verified':
+      return { kind: 'connectivity_verified', message }
+  }
+
+  switch (code) {
+    case 'profile_requires_gateway_expansion':
+      return { kind: 'profile_requires_gateway_expansion', message }
+    case 'unsupported_profile_type':
+    case 'unsupported_field':
+    case 'invalid_config':
+    case 'missing_required_field':
+      return { kind: 'unsupported_config', message }
+    case 'socks_bind_failed':
+      return { kind: 'startup_failed', message }
+    case 'socks_connect_failed':
+      return { kind: 'socks_connect_failed', message }
+    case 'socks_handshake_failed':
+      return { kind: 'proxy_handshake_failure', message }
+    case 'backend_dial_failed':
+    case 'remote_tcp_connect_failed':
+      return { kind: 'upstream_request_failure', message }
+    case 'request_timeout':
+    case 'readiness_timeout':
+    case 'handshake_timeout':
+    case 'handshake_not_observed':
+      return { kind: 'validation_timeout', message }
+    case 'backend_start_failed':
+      return { kind: 'startup_failed', message }
+  }
+
+  if (event.level === 'error' || eventName === 'helper.error') {
+    return { kind: 'startup_failed', message }
   }
 
   return undefined

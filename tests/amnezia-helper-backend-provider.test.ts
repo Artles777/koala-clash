@@ -6,6 +6,7 @@ import * as path from 'node:path'
 import {
   generateBackendConfig,
   getBackendLaunchArgs,
+  getBackendSelfCheckArgs,
   getProductionBackendBinaryName,
   getProductionBackendPathCandidates,
   parseBackendDiagnostics,
@@ -42,6 +43,7 @@ describe('Amnezia helper backend provider', () => {
     })
 
     assert.equal(backend.kind, 'prototype')
+    assert.equal(backend.pathSource, 'development')
     assert.equal(backend.available, true)
     assert.equal(backend.command, '/electron')
     assert.deepEqual(args, [
@@ -72,25 +74,45 @@ describe('Amnezia helper backend provider', () => {
       sessionId: 'session-1',
       profileId: 'amnezia-1'
     })
+    const selfCheckArgs = getBackendSelfCheckArgs(backend)
 
     assert.equal(backend.kind, 'production')
+    assert.equal(backend.pathSource, 'override')
     assert.equal(backend.available, true)
     assert.equal(backend.command, helperPath)
-    assert.deepEqual(args, [
-      'run',
-      '--config',
-      '/tmp/session.json',
-      '--session-id',
-      'session-1',
-      '--profile-id',
-      'amnezia-1',
-      '--mode',
-      'proxy'
-    ])
-    assert.equal(
-      'kind' in backendConfig ? backendConfig.kind : undefined,
-      'koala-amnezia-helper-production-config'
-    )
+    assert.deepEqual(args, ['run', '--config', '/tmp/session.json'])
+    assert.deepEqual(selfCheckArgs, ['version'])
+    assert.equal('version' in backendConfig ? backendConfig.version : undefined, 1)
+  })
+
+  it('marks bundled production backend resolution separately from development overrides', () => {
+    const bundledPath = '/app/resources/files/amnezia-helper/darwin/arm64/amnezia-helper'
+    const backend = resolveHelperBackend({
+      mode: 'production',
+      proxyBackendPath: '/app/amnezia-helper-proxy-backend.cjs',
+      helperStubPath: '/app/amnezia-helper-stub.cjs',
+      resourcesFilesDir: '/app/resources/files',
+      platform: 'darwin',
+      arch: 'arm64',
+      exists: (filePath) => filePath === bundledPath,
+      validateExecutable: ({
+        executablePath,
+        platform = process.platform,
+        arch = process.arch
+      }) => ({
+        ok: true,
+        path: executablePath,
+        platform: String(platform),
+        arch,
+        issues: [],
+        diagnostics: ['validated bundled helper']
+      })
+    })
+
+    assert.equal(backend.kind, 'production')
+    assert.equal(backend.pathSource, 'bundled')
+    assert.equal(backend.command, bundledPath)
+    assert.ok(backend.diagnostics.some((message) => message.includes('bundled resources')))
   })
 
   it('marks production backend as unavailable without implicit prototype fallback', () => {
@@ -218,8 +240,44 @@ describe('Amnezia helper backend provider', () => {
       'config_accepted'
     )
     assert.equal(
+      parseBackendDiagnostics(
+        '{"level":"info","event":"config.validated","message":"config is valid"}'
+      )?.kind,
+      'config_accepted'
+    )
+    assert.equal(
       parseBackendDiagnostics('READY local proxy 127.0.0.1:19080')?.kind,
       'local_proxy_ready'
+    )
+    assert.equal(
+      parseBackendDiagnostics(
+        '{"level":"info","event":"proxy.listening","message":"local SOCKS5 listener is bound"}'
+      )?.kind,
+      'local_proxy_ready'
+    )
+    assert.equal(
+      parseBackendDiagnostics(
+        '{"level":"warn","event":"readiness.handshake_pending","message":"backend and SOCKS are started"}'
+      )?.kind,
+      'handshake_pending'
+    )
+    assert.equal(
+      parseBackendDiagnostics(
+        '{"level":"info","event":"handshake.observed","message":"peer handshake observed"}'
+      )?.kind,
+      'handshake_observed'
+    )
+    assert.equal(
+      parseBackendDiagnostics(
+        '{"level":"info","event":"helper.ready","message":"backend, SOCKS listener, and peer handshake are ready"}'
+      )?.kind,
+      'helper_ready'
+    )
+    assert.equal(
+      parseBackendDiagnostics(
+        '{"level":"error","event":"helper.error","code":"profile_requires_gateway_expansion","message":"profile must be expanded"}'
+      )?.kind,
+      'profile_requires_gateway_expansion'
     )
     assert.equal(
       parseBackendDiagnostics('unsupported config: missing key')?.kind,

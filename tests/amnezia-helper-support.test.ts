@@ -21,6 +21,7 @@ import {
 const backendAvailable: AmneziaHelperBackendSupportSnapshot = {
   mode: 'production',
   kind: 'production',
+  pathSource: 'bundled',
   available: true,
   command: '/opt/koala/amnezia-helper',
   executablePath: '/opt/koala/amnezia-helper',
@@ -83,6 +84,10 @@ function createSession(patch: Partial<AmneziaHelperSession> = {}): AmneziaHelper
       'udp_associate_validated',
       1710000000000
     ),
+    desiredState: 'running',
+    managedByApp: true,
+    restartCount: 0,
+    crashLoopDetected: false,
     ...patch
   }
 }
@@ -162,6 +167,70 @@ describe('Amnezia helper support diagnostics', () => {
     assert.equal(bundle.udp.runtimeAdvertisesUdp, true)
   })
 
+  it('keeps autonomous lifecycle status as secondary support context', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request',
+        managedByApp: true,
+        desiredState: 'running',
+        restartCount: 1,
+        lastExitReason: 'unexpected_exit'
+      }),
+      rulePacks: [],
+      stability: {
+        status: 'passed',
+        lifecycleStressPassed: true,
+        reloadResiliencePassed: true,
+        recoveryPassed: true
+      }
+    })
+
+    assert.equal(bundle.support.primaryStatus.code, 'helper_ready_validated')
+    assert.ok(bundle.support.statuses.some((status) => status.code === 'helper_managed_by_app'))
+    assert.equal(bundle.session?.lifecycle.managedByApp, true)
+    assert.equal(bundle.session?.lifecycle.restartCount, 1)
+  })
+
+  it('surfaces development helper overrides as support warnings', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: {
+        ...backendAvailable,
+        pathSource: 'override'
+      },
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      rulePacks: []
+    })
+
+    assert.equal(bundle.support.primaryStatus.code, 'helper_dev_override')
+    assert.equal(bundle.support.releaseReadiness.status, 'warning')
+    assert.equal(bundle.backend.pathSource, 'override')
+  })
+
+  it('classifies supervised crash loops as blockers', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        status: 'failed',
+        readiness: 'failed',
+        connectivityStatus: 'failed',
+        lastError: 'Amnezia helper crash loop detected after 3 restart attempt(s)',
+        restartCount: 3,
+        lastExitReason: 'crash_loop',
+        crashLoopDetected: true
+      }),
+      rulePacks: []
+    })
+
+    assert.equal(bundle.support.primaryStatus.code, 'helper_crash_loop')
+    assert.equal(bundle.support.releaseReadiness.status, 'blocked')
+    assert.equal(bundle.session?.lifecycle.crashLoopDetected, true)
+  })
+
   it('keeps readiness conservative when stability has not been validated', () => {
     const bundle = createAmneziaHelperDiagnosticsBundle({
       backend: backendAvailable,
@@ -234,6 +303,69 @@ describe('Amnezia helper support diagnostics', () => {
 
     assert.ok(summary.statuses.some((status) => status.code === 'tun_compatible'))
     assert.equal(summary.releaseReadiness.status, 'supported')
+  })
+
+  it('surfaces DIRECT TUN bypass diagnostics in support summaries', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      rulePacks: [],
+      tun: createTunSupportSnapshot(
+        true,
+        undefined,
+        undefined,
+        undefined,
+        {
+          enabled: true,
+          tunEnabled: true,
+          status: 'failed',
+          active: false,
+          directRuleCount: 1,
+          supportedRuleCount: 0,
+          unsupportedRuleCount: 1,
+          resolvedAddressCount: 0,
+          routeExcludeAddresses: [],
+          warnings: [
+            {
+              code: 'process_name_unsupported',
+              rule: 'PROCESS-NAME,Telegram,DIRECT',
+              ruleType: 'PROCESS-NAME',
+              value: 'Telegram',
+              message:
+                'PROCESS-NAME DIRECT selects Mihomo DIRECT but cannot exclude the process from TUN routing.'
+            }
+          ],
+          unsupportedRules: [
+            {
+              rule: 'PROCESS-NAME,Telegram,DIRECT',
+              ruleType: 'PROCESS-NAME',
+              value: 'Telegram',
+              reasonCode: 'process_name_unsupported',
+              message:
+                'PROCESS-NAME DIRECT selects Mihomo DIRECT but cannot exclude the process from TUN routing.'
+            }
+          ],
+          resolvedAt: 1710000000000
+        }
+      )
+    })
+
+    assert.equal(bundle.tun.directTunBypassEnabled, true)
+    assert.equal(bundle.tun.directTunBypassActive, false)
+    assert.equal(bundle.tun.directTunBypassRuleCount, 1)
+    assert.ok(
+      bundle.support.statuses.some(
+        (status) => status.code === 'direct_process_name_bypass_unsupported'
+      )
+    )
+    assert.ok(
+      bundle.readinessSummary.recommendedActions.some(
+        (action) => action.code === 'avoid_process_direct_bypass'
+      )
+    )
   })
 
   it('adds a support warning when TUN domain helper rules are unlikely to match', () => {

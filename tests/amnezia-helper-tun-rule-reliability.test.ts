@@ -67,6 +67,27 @@ describe('Amnezia helper TUN DNS rule reliability', () => {
     assert.equal(result.ruleTypes.hasIpCidrOnly, true)
   })
 
+  it('keeps process-name helper rules independent from TUN DNS reliability', () => {
+    const result = evaluateAmneziaHelperTunRuleReliability({
+      tunEnabled: true,
+      dnsEnabled: false,
+      dnsHijackEnabled: false,
+      dnsEnhancedMode: 'unknown',
+      rules: [
+        createAmneziaHelperRule({
+          id: 'process-rule',
+          type: 'PROCESS-NAME',
+          value: 'Yandex Helper',
+          now: 1710000000000
+        })
+      ]
+    })
+
+    assert.equal(result.reliability, 'reliable')
+    assert.equal(result.primaryReason, 'non_domain_rules_only')
+    assert.equal(result.ruleTypes.hasProcessRules, true)
+  })
+
   it('classifies unknown DNS enhanced mode as degraded for domain rules', () => {
     const result = evaluateAmneziaHelperTunRuleReliability({
       tunEnabled: true,

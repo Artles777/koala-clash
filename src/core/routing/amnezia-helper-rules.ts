@@ -6,7 +6,12 @@ import {
 
 export const AMNEZIA_HELPER_RULE_TARGET = AMNEZIA_HELPER_GROUP_NAME
 
-export type AmneziaHelperRuleType = 'DOMAIN' | 'DOMAIN-SUFFIX' | 'DOMAIN-KEYWORD' | 'IP-CIDR'
+export type AmneziaHelperRuleType =
+  | 'DOMAIN'
+  | 'DOMAIN-SUFFIX'
+  | 'DOMAIN-KEYWORD'
+  | 'IP-CIDR'
+  | 'PROCESS-NAME'
 export type AmneziaHelperRuleTarget = typeof AMNEZIA_HELPER_RULE_TARGET
 export type AmneziaHelperRuleValidationCode =
   | 'empty_value'
@@ -57,7 +62,8 @@ const supportedRuleTypes = new Set<AmneziaHelperRuleType>([
   'DOMAIN',
   'DOMAIN-SUFFIX',
   'DOMAIN-KEYWORD',
-  'IP-CIDR'
+  'IP-CIDR',
+  'PROCESS-NAME'
 ])
 
 export function createAmneziaHelperRule(input: {
@@ -247,6 +253,8 @@ function isRuleValueValid(type: AmneziaHelperRuleType, value: string): boolean {
       return value.length > 0 && !/\s/.test(value)
     case 'IP-CIDR':
       return isIpv4Cidr(value)
+    case 'PROCESS-NAME':
+      return isProcessName(value)
   }
 }
 
@@ -275,4 +283,8 @@ function isIpv4Cidr(value: string): boolean {
     const octet = Number(part)
     return Number.isInteger(octet) && octet >= 0 && octet <= 255
   })
+}
+
+function isProcessName(value: string): boolean {
+  return value.length > 0 && value.length <= 255 && !value.includes(',')
 }

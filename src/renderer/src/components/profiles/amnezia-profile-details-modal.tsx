@@ -52,7 +52,8 @@ const helperRuleTypes: AmneziaHelperRuleType[] = [
   'DOMAIN',
   'DOMAIN-SUFFIX',
   'DOMAIN-KEYWORD',
-  'IP-CIDR'
+  'IP-CIDR',
+  'PROCESS-NAME'
 ]
 
 interface HelperRuleDraft {
@@ -257,8 +258,8 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
   const canStartHelper =
     Boolean(executionPlan?.helper) &&
     startupPreflight?.canStart !== false &&
-    !['starting', 'running', 'stopping'].includes(helperStatus)
-  const canStopHelper = ['starting', 'running'].includes(helperStatus)
+    !['starting', 'running', 'restarting', 'stopping'].includes(helperStatus)
+  const canStopHelper = ['starting', 'running', 'restarting'].includes(helperStatus)
   const canTestConnectivity = helperStatus === 'running' && helperReadiness === 'ready'
   const supportSummary = supportSnapshot?.support
   const supportPrimaryStatus = supportSummary?.primaryStatus
@@ -789,6 +790,34 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                   value={getBackendModeLabel(t, helperSession?.backendMode)}
                 />
                 <RuntimeRow
+                  label={t('profile.helperManagedByApp')}
+                  value={formatBoolean(t, helperSession?.managedByApp ?? false)}
+                />
+                <RuntimeRow
+                  label={t('profile.helperDesiredState')}
+                  value={getHelperDesiredStateLabel(t, helperSession?.desiredState)}
+                />
+                <RuntimeRow
+                  label={t('profile.helperRestartCount')}
+                  value={(helperSession?.restartCount ?? 0).toString()}
+                />
+                <RuntimeRow
+                  label={t('profile.helperLastExitReason')}
+                  value={
+                    helperSession?.lastExitReason
+                      ? getHelperExitReasonLabel(t, helperSession.lastExitReason)
+                      : '-'
+                  }
+                />
+                <RuntimeRow
+                  label={t('profile.helperBackendSource')}
+                  value={getBackendPathSourceLabel(t, supportSnapshot?.backend.pathSource)}
+                />
+                <RuntimeRow
+                  label={t('profile.helperCrashLoop')}
+                  value={formatBoolean(t, helperSession?.crashLoopDetected ?? false)}
+                />
+                <RuntimeRow
                   label={t('profile.readiness')}
                   value={getReadinessLabel(t, helperReadiness)}
                 />
@@ -1074,6 +1103,26 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                     value={supportSnapshot?.tun.helperBypassResolutionStatus ?? '-'}
                   />
                   <RuntimeRow
+                    label={t('profile.directTunBypass')}
+                    value={
+                      supportSnapshot?.tun.directTunBypassActive
+                        ? t('profile.tunBypassActive')
+                        : t('profile.tunBypassInactive')
+                    }
+                  />
+                  <RuntimeRow
+                    label={t('profile.directTunBypassRules')}
+                    value={String(supportSnapshot?.tun.directTunBypassRuleCount ?? 0)}
+                  />
+                  <RuntimeRow
+                    label={t('profile.directTunBypassIps')}
+                    value={String(supportSnapshot?.tun.directTunBypassResolvedAddressCount ?? 0)}
+                  />
+                  <RuntimeRow
+                    label={t('profile.directTunBypassStatus')}
+                    value={supportSnapshot?.tun.directTunBypassStatus ?? '-'}
+                  />
+                  <RuntimeRow
                     label={t('profile.tunDnsHijack')}
                     value={formatBoolean(t, supportSnapshot?.tun.dnsHijackEnabled ?? false)}
                   />
@@ -1123,6 +1172,18 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                     </div>
                   </div>
                 )}
+
+                {supportSnapshot?.tun.directTunBypassEnabled &&
+                  supportSnapshot.tun.directTunBypassWarnings.length > 0 && (
+                    <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                      <div className="font-medium">{t('profile.directTunBypassWarning')}</div>
+                      <div className="mt-1 space-y-1 text-muted-foreground">
+                        {supportSnapshot.tun.directTunBypassWarnings.slice(0, 3).map((warning) => (
+                          <div key={warning}>{warning}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                 {supportUdp && !supportUdp.runtimeAdvertisesUdp && (
                   <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
@@ -1717,12 +1778,70 @@ function getHelperStatusLabel(
       return t('profile.helperStatusStarting')
     case 'running':
       return t('profile.helperStatusRunning')
+    case 'restarting':
+      return t('profile.helperStatusRestarting')
     case 'stopping':
       return t('profile.helperStatusStopping')
     case 'stopped':
       return t('profile.helperStatusStopped')
     case 'failed':
       return t('profile.helperStatusFailed')
+  }
+}
+
+function getHelperDesiredStateLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  state: AmneziaHelperDesiredState | undefined
+): string {
+  switch (state) {
+    case 'idle':
+      return t('profile.helperDesiredStateIdle')
+    case 'running':
+      return t('profile.helperDesiredStateRunning')
+    case 'stopped':
+      return t('profile.helperDesiredStateStopped')
+    default:
+      return '-'
+  }
+}
+
+function getHelperExitReasonLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  reason: AmneziaHelperExitReason
+): string {
+  switch (reason) {
+    case 'requested_stop':
+      return t('profile.helperExitRequestedStop')
+    case 'app_shutdown':
+      return t('profile.helperExitAppShutdown')
+    case 'profile_changed':
+      return t('profile.helperExitProfileChanged')
+    case 'runtime_disabled':
+      return t('profile.helperExitRuntimeDisabled')
+    case 'startup_conditions_invalid':
+      return t('profile.helperExitStartupConditionsInvalid')
+    case 'unexpected_exit':
+      return t('profile.helperExitUnexpected')
+    case 'startup_failed':
+      return t('profile.helperExitStartupFailed')
+    case 'crash_loop':
+      return t('profile.helperExitCrashLoop')
+  }
+}
+
+function getBackendPathSourceLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  source: AmneziaHelperBackendSupportSnapshot['pathSource'] | undefined
+): string {
+  switch (source) {
+    case 'bundled':
+      return t('profile.helperBackendSourceBundled')
+    case 'override':
+      return t('profile.helperBackendSourceOverride')
+    case 'development':
+      return t('profile.helperBackendSourceDevelopment')
+    default:
+      return '-'
   }
 }
 

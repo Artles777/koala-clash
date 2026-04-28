@@ -425,6 +425,8 @@ async function syncCurrentAmneziaHelperAfterCoreStart(): Promise<void> {
 
 export async function quitWithoutCore(): Promise<void> {
   await keepCoreAlive()
+  const { stopAllAmneziaHelpers } = await import('../runtime/amnezia-helper-manager')
+  await stopAllAmneziaHelpers('app_shutdown')
   app.exit()
 }
 

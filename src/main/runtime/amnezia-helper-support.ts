@@ -22,6 +22,7 @@ import type {
   AmneziaHelperTunBypassResolution,
   AmneziaHelperTunBypassResolutionStatus
 } from '../../core/routing/amnezia-helper-tun-bypass'
+import type { DirectTunBypassResolution } from '../../core/routing/direct-tun-bypass'
 import type {
   AmneziaHelperExecutableValidationIssue,
   AmneziaHelperExecutableValidationResult,
@@ -55,6 +56,10 @@ export type AmneziaHelperSupportStatusCode =
   | 'connectivity_failed'
   | 'helper_not_running'
   | 'helper_starting'
+  | 'helper_managed_by_app'
+  | 'helper_restarting'
+  | 'helper_crash_loop'
+  | 'helper_dev_override'
   | 'proxy_ready_not_validated'
   | 'helper_ready_validated'
   | 'helper_rules_inactive'
@@ -65,6 +70,10 @@ export type AmneziaHelperSupportStatusCode =
   | 'tun_domain_rules_degraded'
   | 'tun_domain_rules_unlikely'
   | 'tun_domain_rules_blocked'
+  | 'direct_tun_bypass_active'
+  | 'direct_tun_bypass_partial'
+  | 'direct_tun_bypass_blocked'
+  | 'direct_process_name_bypass_unsupported'
   | 'udp_supported'
   | 'udp_tcp_only'
 
@@ -161,6 +170,7 @@ export interface AmneziaHelperBackendValidationSnapshot {
 export interface AmneziaHelperBackendSupportSnapshot {
   mode: ResolvedAmneziaHelperBackend['mode']
   kind: ResolvedAmneziaHelperBackend['kind']
+  pathSource: ResolvedAmneziaHelperBackend['pathSource']
   available: boolean
   command: string
   executablePath: string
@@ -168,6 +178,15 @@ export interface AmneziaHelperBackendSupportSnapshot {
   validation?: AmneziaHelperBackendValidationSnapshot
   helperChecksumSha256?: string
   helperVersion?: string
+}
+
+export interface AmneziaHelperLifecycleSupportSnapshot {
+  desiredState: AmneziaHelperSession['desiredState']
+  managedByApp: boolean
+  restartCount: number
+  lastExitReason?: AmneziaHelperSession['lastExitReason']
+  lastRestartAt?: number
+  crashLoopDetected: boolean
 }
 
 export interface AmneziaHelperSessionSupportSnapshot {
@@ -196,6 +215,7 @@ export interface AmneziaHelperSessionSupportSnapshot {
   lastConnectivityLatencyMs?: number
   connectivityResult?: AmneziaHelperConnectivityResult
   udpCapability: AmneziaHelperUdpCapability
+  lifecycle: AmneziaHelperLifecycleSupportSnapshot
 }
 
 export interface AmneziaHelperRulePacksSupportSummary {
@@ -224,6 +244,19 @@ export interface AmneziaHelperTunSupportSnapshot {
   helperRulesIpCidrOnly: boolean
   helperRulesDomainCount: number
   helperRulesIpCidrCount: number
+  directTunBypassEnabled: boolean
+  directTunBypassActive: boolean
+  directTunBypassStatus: DirectTunBypassResolution['status']
+  directTunBypassRuleCount: number
+  directTunBypassResolvedAddressCount: number
+  directTunBypassWarnings: string[]
+  unsupportedDirectBypassRules: Array<{
+    rule: string
+    ruleType: string
+    value?: string
+    reasonCode: string
+    message: string
+  }>
 }
 
 export interface AmneziaHelperUdpSupportSnapshot {
@@ -308,6 +341,11 @@ export interface AmneziaHelperSupportSummaryExport {
     | 'helperBypassActive'
     | 'helperBypassIpsCount'
     | 'helperBypassResolutionStatus'
+    | 'directTunBypassEnabled'
+    | 'directTunBypassActive'
+    | 'directTunBypassStatus'
+    | 'directTunBypassRuleCount'
+    | 'directTunBypassResolvedAddressCount'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'
   >
@@ -348,6 +386,7 @@ interface CreateDiagnosticsBundleInput {
   routingTarget?: AmneziaHelperRoutingTarget
   lastConnectivityResult?: AmneziaHelperConnectivityResult
   tun?: AmneziaHelperTunSupportSnapshot
+  directTunBypass?: DirectTunBypassResolution
   udp?: AmneziaHelperUdpSupportSnapshot
   stability?: AmneziaHelperStabilitySupportSnapshot
   stabilityReport?: AmneziaHelperStabilityReport
@@ -373,7 +412,8 @@ const defaultRulesByType: Record<AmneziaHelperRuleType, number> = {
   DOMAIN: 0,
   'DOMAIN-SUFFIX': 0,
   'DOMAIN-KEYWORD': 0,
-  'IP-CIDR': 0
+  'IP-CIDR': 0,
+  'PROCESS-NAME': 0
 }
 
 export function createAmneziaHelperBackendSupportSnapshot(input: {
@@ -397,6 +437,7 @@ export function createAmneziaHelperBackendSupportSnapshot(input: {
   return {
     mode: input.backend.mode,
     kind: input.backend.kind,
+    pathSource: input.backend.pathSource,
     available: input.backend.available,
     command: input.backend.command,
     executablePath: input.backend.executablePath,
@@ -414,7 +455,8 @@ export function createAmneziaHelperDiagnosticsBundle(
   const rules = createRulePacksSupportSummary(input.rulePacks ?? [])
   const routingTarget = session?.routingTarget ?? input.routingTarget
   const lastConnectivityResult = session?.connectivityResult ?? input.lastConnectivityResult
-  const tun = input.tun ?? createTunSupportSnapshot(false, input.session?.tunBypass)
+  const tun =
+    input.tun ?? createTunSupportSnapshot(false, input.session?.tunBypass, undefined, undefined, input.directTunBypass)
   const udp =
     input.udp ??
     createUdpSupportSnapshot(
@@ -547,7 +589,15 @@ export function createSessionSupportSnapshot(
     lastConnectivityError: session.lastConnectivityError,
     lastConnectivityLatencyMs: session.lastConnectivityLatencyMs,
     connectivityResult: cloneConnectivityResult(session.connectivityResult),
-    udpCapability: { ...session.udpCapability }
+    udpCapability: { ...session.udpCapability },
+    lifecycle: {
+      desiredState: session.desiredState,
+      managedByApp: session.managedByApp,
+      restartCount: session.restartCount,
+      lastExitReason: session.lastExitReason,
+      lastRestartAt: session.lastRestartAt,
+      crashLoopDetected: session.crashLoopDetected
+    }
   }
 }
 
@@ -581,7 +631,8 @@ export function createTunSupportSnapshot(
   enabled: boolean,
   resolution?: AmneziaHelperTunBypassResolution,
   activeResolution?: AmneziaHelperTunBypassResolution,
-  ruleReliability?: AmneziaHelperTunRuleReliabilityResult
+  ruleReliability?: AmneziaHelperTunRuleReliabilityResult,
+  directTunBypass?: DirectTunBypassResolution
 ): AmneziaHelperTunSupportSnapshot {
   const effectiveResolution = resolution ?? activeResolution
   const active = enabled && activeResolution?.status === 'resolved'
@@ -610,7 +661,15 @@ export function createTunSupportSnapshot(
     helperRulesHaveDomainRules: reliability.ruleTypes.hasDomainRules,
     helperRulesIpCidrOnly: reliability.ruleTypes.hasIpCidrOnly,
     helperRulesDomainCount: reliability.ruleTypes.domainRuleCount,
-    helperRulesIpCidrCount: reliability.ruleTypes.ipCidrRuleCount
+    helperRulesIpCidrCount: reliability.ruleTypes.ipCidrRuleCount,
+    directTunBypassEnabled: directTunBypass?.enabled ?? false,
+    directTunBypassActive: directTunBypass?.active ?? false,
+    directTunBypassStatus: directTunBypass?.status ?? 'disabled',
+    directTunBypassRuleCount: directTunBypass?.directRuleCount ?? 0,
+    directTunBypassResolvedAddressCount: directTunBypass?.resolvedAddressCount ?? 0,
+    directTunBypassWarnings: directTunBypass?.warnings.map((warning) => warning.message) ?? [],
+    unsupportedDirectBypassRules:
+      directTunBypass?.unsupportedRules.map((rule) => ({ ...rule })) ?? []
   }
 }
 
@@ -941,6 +1000,20 @@ function collectRecommendedActions(
       'Treat AMNEZIA_HELPER as TCP-only until UDP support is validated.'
     )
   }
+  if (hasAny(codes, ['direct_tun_bypass_partial', 'direct_tun_bypass_blocked'])) {
+    add(
+      'inspect_direct_tun_bypass',
+      'warning',
+      'Use IP-CIDR or exact DOMAIN DIRECT rules for TUN bypass, and inspect unresolved or unsupported rules.'
+    )
+  }
+  if (codes.has('direct_process_name_bypass_unsupported')) {
+    add(
+      'avoid_process_direct_bypass',
+      'warning',
+      'Unknown PROCESS-NAME DIRECT rules cannot exclude an app from TUN; use VPN/PROXY, explicit IP-CIDR exclusions, or a supported built-in preset.'
+    )
+  }
   if (codes.has('stability_not_validated')) {
     add(
       'run_stability_smoke',
@@ -967,6 +1040,7 @@ function sourceForStatusCode(
   code: AmneziaHelperSupportStatusCode
 ): AmneziaHelperReadinessIssueSource {
   if (code.startsWith('tun_')) return code.includes('domain_rules') ? 'dns' : 'tun'
+  if (code.startsWith('direct_tun_') || code.startsWith('direct_process_')) return 'tun'
   if (code.startsWith('udp_')) return 'udp'
   if (code.includes('routing') || code.includes('rules')) return 'helper'
   if (code.includes('helper') || code.includes('backend') || code.includes('startup')) {
@@ -1047,6 +1121,11 @@ function createSupportSummaryExport(input: {
       helperBypassActive: input.tun.helperBypassActive,
       helperBypassIpsCount: input.tun.helperBypassIpsCount,
       helperBypassResolutionStatus: input.tun.helperBypassResolutionStatus,
+      directTunBypassEnabled: input.tun.directTunBypassEnabled,
+      directTunBypassActive: input.tun.directTunBypassActive,
+      directTunBypassStatus: input.tun.directTunBypassStatus,
+      directTunBypassRuleCount: input.tun.directTunBypassRuleCount,
+      directTunBypassResolvedAddressCount: input.tun.directTunBypassResolvedAddressCount,
       helperRuleReliability: input.tun.helperRuleReliability,
       helperRuleReliabilityReason: input.tun.helperRuleReliabilityReason
     },
@@ -1104,7 +1183,19 @@ function collectSupportStatuses(input: CreateSupportSummaryInput): AmneziaHelper
     }
   }
 
+  if (input.backend.pathSource === 'override') {
+    statuses.push(createStatus('helper_dev_override'))
+  }
+
   if (input.session) {
+    if (input.session.lifecycle.crashLoopDetected) {
+      statuses.push(
+        createStatus('helper_crash_loop', {
+          restartCount: input.session.lifecycle.restartCount,
+          message: input.session.lastError ?? ''
+        })
+      )
+    }
     statuses.push(
       ...input.session.runtimeDiagnostics.map((diagnostic) =>
         createStatus(mapRuntimeDiagnosticCategory(diagnostic.category), {
@@ -1126,6 +1217,12 @@ function collectSupportStatuses(input: CreateSupportSummaryInput): AmneziaHelper
       statuses.push(
         createStatus('startup_failed', {
           message: input.session.lastError ?? ''
+        })
+      )
+    } else if (input.session.status === 'restarting') {
+      statuses.push(
+        createStatus('helper_restarting', {
+          restartCount: input.session.lifecycle.restartCount
         })
       )
     } else if (input.session.status === 'starting' || input.session.status === 'stopping') {
@@ -1156,6 +1253,9 @@ function collectSupportStatuses(input: CreateSupportSummaryInput): AmneziaHelper
       }
     } else {
       statuses.push(createStatus('helper_not_running'))
+    }
+    if (input.session.lifecycle.managedByApp) {
+      statuses.push(createStatus('helper_managed_by_app'))
     }
   } else {
     statuses.push(createStatus('helper_not_running'))
@@ -1213,6 +1313,40 @@ function collectSupportStatuses(input: CreateSupportSummaryInput): AmneziaHelper
       statuses.push(
         createStatus('tun_domain_rules_degraded', {
           reason: tun.helperRuleReliabilityReason
+        })
+      )
+    }
+  }
+
+  if (tun.enabled && tun.directTunBypassEnabled) {
+    if (tun.directTunBypassActive && tun.directTunBypassWarnings.length === 0) {
+      statuses.push(
+        createStatus('direct_tun_bypass_active', {
+          rules: tun.directTunBypassRuleCount,
+          addresses: tun.directTunBypassResolvedAddressCount
+        })
+      )
+    } else if (tun.directTunBypassActive) {
+      statuses.push(
+        createStatus('direct_tun_bypass_partial', {
+          rules: tun.directTunBypassRuleCount,
+          addresses: tun.directTunBypassResolvedAddressCount
+        })
+      )
+    } else if (tun.directTunBypassRuleCount > 0 && tun.directTunBypassStatus === 'failed') {
+      statuses.push(
+        createStatus('direct_tun_bypass_blocked', {
+          rules: tun.directTunBypassRuleCount
+        })
+      )
+    }
+
+    if (
+      tun.unsupportedDirectBypassRules.some((rule) => rule.reasonCode === 'process_name_unsupported')
+    ) {
+      statuses.push(
+        createStatus('direct_process_name_bypass_unsupported', {
+          unsupportedRules: tun.unsupportedDirectBypassRules.length
         })
       )
     }
@@ -1428,6 +1562,26 @@ const statusDefinitions: Record<
     title: 'Helper is starting',
     message: 'The helper process is being started or stopped.'
   },
+  helper_managed_by_app: {
+    severity: 'info',
+    title: 'Helper managed by app',
+    message: 'Koala Clash owns this helper process lifecycle for the active VPN profile.'
+  },
+  helper_restarting: {
+    severity: 'warning',
+    title: 'Helper is restarting',
+    message: 'The helper exited unexpectedly and Koala Clash is attempting a bounded restart.'
+  },
+  helper_crash_loop: {
+    severity: 'blocker',
+    title: 'Helper crash loop detected',
+    message: 'The helper exited repeatedly and automatic restarts were stopped.'
+  },
+  helper_dev_override: {
+    severity: 'warning',
+    title: 'Development helper override active',
+    message: 'The helper executable is resolved from KOALA_AMNEZIA_HELPER_BACKEND_PATH.'
+  },
   proxy_ready_not_validated: {
     severity: 'warning',
     title: 'Proxy is ready but not validated',
@@ -1483,6 +1637,29 @@ const statusDefinitions: Record<
     title: 'TUN helper domain rules blocked',
     message:
       'AMNEZIA_HELPER domain rules cannot be considered safe under the current TUN DNS settings.'
+  },
+  direct_tun_bypass_active: {
+    severity: 'info',
+    title: 'DIRECT TUN bypass active',
+    message: 'Supported DIRECT rules are injected as transient TUN route exclusions.'
+  },
+  direct_tun_bypass_partial: {
+    severity: 'warning',
+    title: 'DIRECT TUN bypass partial',
+    message:
+      'Some DIRECT rules were translated into TUN route exclusions, but unresolved or unsupported rules remain.'
+  },
+  direct_tun_bypass_blocked: {
+    severity: 'warning',
+    title: 'DIRECT TUN bypass unavailable',
+    message:
+      'DIRECT rules exist, but none could be safely translated into TUN route exclusions.'
+  },
+  direct_process_name_bypass_unsupported: {
+    severity: 'warning',
+    title: 'PROCESS-NAME cannot bypass TUN',
+    message:
+      'Unknown PROCESS-NAME DIRECT keeps Mihomo DIRECT behavior, but it cannot exclude the process from TUN routing without a known address preset.'
   },
   udp_supported: {
     severity: 'info',

@@ -150,6 +150,8 @@ function doesRuleMatchInput(
       return Boolean(input.domain && input.domain.includes(rule.value.toLowerCase()))
     case 'IP-CIDR':
       return Boolean(input.ip && isIpv4InCidr(input.ip, rule.value))
+    case 'PROCESS-NAME':
+      return false
   }
 }
 

@@ -275,7 +275,10 @@ export function createUnifiedRuleScopes(input: {
   hasCurrentMihomoProfile?: boolean
   helperTargetInjected?: boolean
 }): UnifiedRuleScope[] {
-  const runtimeRules = mapMihomoRulesToUnifiedRules(input.mihomoRules ?? [], input.activeRuleOwner)
+  const runtimeRules = mapMihomoRulesToUnifiedRules(
+    input.mihomoRules ?? [],
+    input.activeRuleOwner
+  ).filter((rule) => !isHiddenUnifiedRuntimeRule(rule))
   const mihomoRules = runtimeRules.filter((rule) => rule.scopeId === 'mihomo')
   const amneziaRules = runtimeRules.filter((rule) => rule.scopeId === 'amnezia')
   const hasMihomoOwner =
@@ -384,14 +387,17 @@ export function createUnifiedRuleSavePlan(input: {
   value: string
   target: string
 }): UnifiedRuleSavePlan {
-  const value = input.value.trim()
+  const type = normalizeUnifiedRuleType(input.type)
+  const value = type === 'MATCH' ? '' : input.value.trim()
   const target = normalizeUserFacingRuleTarget(input.target)
+  if (!type) throw new Error('Rule type is required')
+  if (!value && type !== 'MATCH') throw new Error('Rule value is required')
 
   return {
     ownerType: input.owner.ownerType,
     ownerProfileId: input.owner.ownerProfileId,
     ownerProfileName: input.owner.ownerProfileName,
-    serializedRule: `${input.type},${value},${target}`,
+    serializedRule: type === 'MATCH' ? `${type},${target}` : `${type},${value},${target}`,
     userFacingTarget: getUnifiedRuleDisplayTarget(input.owner.ownerType, target),
     successMessageKey:
       input.owner.ownerType === 'amnezia'
@@ -467,6 +473,22 @@ export function mapMihomoRulesToUnifiedRules(
     editable: false,
     size: rule.size
   }))
+}
+
+export function isHiddenUnifiedRuntimeRule(rule: UnifiedRuleItem): boolean {
+  if (rule.editable || rule.ownerType !== 'amnezia') return false
+  if (normalizeUnifiedRuleType(rule.type) !== 'AND') return false
+  if (normalizeUserFacingRuntimeTarget(rule.target) !== 'REJECT') return false
+
+  const normalizedPayload = rule.value.toLowerCase().replace(/[\s_\-()]/g, '')
+  return (
+    normalizedPayload.includes('network,udp') &&
+    normalizedPayload.includes('dstport,443')
+  )
+}
+
+function normalizeUserFacingRuntimeTarget(target: string): string {
+  return target.trim().toUpperCase()
 }
 
 export function mapAmneziaHelperRulePacksToUnifiedRules(

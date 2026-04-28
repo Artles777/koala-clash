@@ -53,7 +53,7 @@ Private fixtures must not be committed. They should contain a normalized profile
 The JSON report records:
 
 - `backend_resolution`: packaged/override path resolution and executable validation
-- `self_check`: optional helper `self-check` command
+- `self_check`: optional helper `version` command
 - `startup`: helper process creation and config generation
 - `readiness`: local proxy endpoint readiness
 - `connectivity`: TCP, SOCKS5 handshake, upstream HTTP request through the proxy, plus UDP capability classification

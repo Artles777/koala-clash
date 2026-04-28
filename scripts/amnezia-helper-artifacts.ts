@@ -70,6 +70,8 @@ export function parseArtifactArgs(argv: string[]): ArtifactCliOptions {
   for (let index = startIndex; index < argv.length; index += 1) {
     const arg = argv[index]
     switch (arg) {
+      case '--':
+        break
       case '--help':
       case '-h':
         options.help = true
@@ -181,12 +183,13 @@ Prepared package layout:
 Options:
   prepare|validate                 Command, defaults to prepare
   --source-root <path>              Source artifact root, defaults to helper-artifacts
+                                   Accepts root, dist/, build/, or amnezia-helper/ layouts
   --staging-root <path>             Staging root, defaults to extra/files
   --target <platform[-arch]>        Target to require; repeatable
   --arch <x64|arm64>                Arch for platform-only --target values
   --all                            Require all desktop targets
-  --self-check                     Run helper self-check when runnable on current host
-  --force-self-check               Run self-check even for cross targets
+  --self-check                     Run helper version check when runnable on current host
+  --force-self-check               Run version check even for cross targets
   --self-check-timeout-ms <ms>
   --manifest-path <path>
   --report-path <path>

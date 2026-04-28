@@ -8,6 +8,7 @@ import {
   createUnifiedSupportSummary,
   createUnifiedUiBundle,
   getUnifiedRuleDisplayTarget,
+  isHiddenUnifiedRuntimeRule,
   isUserFacingRuleTarget,
   resolveDefaultRuleOwnerId,
   resolveUnifiedRuleScopeId
@@ -22,6 +23,7 @@ import {
   duplicateUnifiedManagedRuleToOwner,
   getSelectableUnifiedRuleIds,
   importUnifiedRulesToPatch,
+  moveUnifiedManagedRule,
   removeUnifiedManagedRules,
   mapRulePatchesToUnifiedRules,
   removeUnifiedManagedRule,
@@ -29,6 +31,7 @@ import {
   setUnifiedManagedRulesEnabled,
   setUnifiedManagedRuleEnabled
 } from '../src/core/ui/unified-rule-management'
+import { createKoalaRuBundleRule } from '../src/core/routing/mihomo-rule-provider-presets'
 
 describe('unified UI view models', () => {
   it('maps mixed Mihomo and Amnezia profiles into one presentation list', () => {
@@ -266,6 +269,78 @@ describe('unified UI view models', () => {
     assert.equal(vpnPlan.successMessageKey, 'pages.rules.vpnRuleAdded')
   })
 
+  it('serializes MATCH rules without a value for Mihomo and VPN owners', () => {
+    const owners = createUnifiedRuleOwners(
+      createUnifiedProfileItems(
+        [
+          { id: 'mihomo-1', type: 'remote', name: 'Main Mihomo', profileKind: 'mihomo' },
+          {
+            id: 'amnezia-1',
+            type: 'local',
+            name: 'Work VPN',
+            profileKind: 'amnezia',
+            importedSourceId: 'source-1',
+            normalizedProfileId: 'normalized-1'
+          }
+        ],
+        'amnezia-1'
+      )
+    )
+
+    const mihomoPlan = createUnifiedRuleSavePlan({
+      owner: owners[0],
+      type: 'MATCH',
+      value: '',
+      target: 'PROXY'
+    })
+    const vpnPlan = createUnifiedRuleSavePlan({
+      owner: owners[1],
+      type: 'MATCH',
+      value: '',
+      target: 'PROXY'
+    })
+
+    assert.equal(mihomoPlan.serializedRule, 'MATCH,PROXY')
+    assert.equal(vpnPlan.serializedRule, 'MATCH,PROXY')
+    assert.equal(vpnPlan.userFacingTarget, 'VPN / PROXY')
+
+    const rules = mapRulePatchesToUnifiedRules(owners, {
+      'amnezia-1': { ...createEmptyUnifiedRulePatchFile(), prepend: ['MATCH,PROXY'] }
+    })
+
+    assert.equal(rules[0].type, 'MATCH')
+    assert.equal(rules[0].value, '')
+    assert.equal(rules[0].target, 'PROXY')
+  })
+
+  it('creates the RU bundle preset as a normal user-facing RULE-SET rule', () => {
+    const owners = createUnifiedRuleOwners(
+      createUnifiedProfileItems(
+        [
+          {
+            id: 'amnezia-1',
+            type: 'local',
+            name: 'Work VPN',
+            profileKind: 'amnezia',
+            importedSourceId: 'source-1',
+            normalizedProfileId: 'normalized-1'
+          }
+        ],
+        'amnezia-1'
+      )
+    )
+    const plan = createUnifiedRuleSavePlan({
+      owner: owners[0],
+      type: 'RULE-SET',
+      value: 'ru-bundle',
+      target: 'PROXY'
+    })
+
+    assert.equal(createKoalaRuBundleRule('PROXY'), 'RULE-SET,ru-bundle,PROXY')
+    assert.equal(plan.serializedRule, 'RULE-SET,ru-bundle,PROXY')
+    assert.equal(plan.userFacingTarget, 'VPN / PROXY')
+  })
+
   it('keeps AMNEZIA_HELPER internal in user-facing rule models', () => {
     assert.equal(isUserFacingRuleTarget('AMNEZIA_HELPER'), false)
     assert.equal(getUnifiedRuleDisplayTarget('amnezia', 'AMNEZIA_HELPER'), 'VPN / PROXY')
@@ -291,6 +366,47 @@ describe('unified UI view models', () => {
       bundle.allRules.some((rule) => rule.target === 'AMNEZIA_HELPER'),
       false
     )
+  })
+
+  it('hides generated Amnezia TCP-only UDP guard rules from the normal rules list', () => {
+    const bundle = createUnifiedUiBundle({
+      currentProfileId: 'amnezia-1',
+      profileItems: [
+        {
+          id: 'amnezia-1',
+          type: 'local',
+          name: 'Imported Amnezia',
+          profileKind: 'amnezia',
+          importedSourceId: 'source-1',
+          normalizedProfileId: 'normalized-1'
+        }
+      ],
+      mihomoRules: [
+        {
+          type: 'AND',
+          payload: '((Network,udp) && (DstPort,443) && (DomainSuffix,linkedin.com))',
+          proxy: 'REJECT'
+        },
+        { type: 'DOMAIN-SUFFIX', payload: 'linkedin.com', proxy: 'PROXY' }
+      ]
+    })
+
+    assert.equal(
+      isHiddenUnifiedRuntimeRule({
+        id: 'runtime-guard',
+        scopeId: 'amnezia',
+        source: 'amnezia',
+        ownerType: 'amnezia',
+        type: 'AND',
+        value: '((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,linkedin.com))',
+        target: 'REJECT',
+        enabled: true,
+        editable: false
+      }),
+      true
+    )
+    assert.equal(bundle.allRules.length, 1)
+    assert.equal(bundle.allRules[0].type, 'DOMAIN-SUFFIX')
   })
 
   it('edits Mihomo-owned PROXY rules without changing owner', () => {
@@ -511,6 +627,28 @@ describe('unified UI view models', () => {
     assert.deepEqual(deleted.prepend, ['DOMAIN-SUFFIX,linkedin.com,PROXY'])
   })
 
+  it('moves managed rules within their profile patch order', () => {
+    const patch = {
+      ...createEmptyUnifiedRulePatchFile(),
+      prepend: [
+        'DOMAIN-SUFFIX,linkedin.com,PROXY',
+        'RULE-SET,ru-bundle,PROXY',
+        'PROCESS-NAME,Telegram,DIRECT'
+      ]
+    }
+
+    const movedUp = moveUnifiedManagedRule(patch, 'prepend', 2, 'up')
+    assert.deepEqual(movedUp.prepend, [
+      'DOMAIN-SUFFIX,linkedin.com,PROXY',
+      'PROCESS-NAME,Telegram,DIRECT',
+      'RULE-SET,ru-bundle,PROXY'
+    ])
+
+    const movedDown = moveUnifiedManagedRule(movedUp, 'prepend', 1, 'down')
+    assert.deepEqual(movedDown.prepend, patch.prepend)
+    assert.deepEqual(moveUnifiedManagedRule(patch, 'prepend', 0, 'up').prepend, patch.prepend)
+  })
+
   it('bulk duplicates selected rules to an owner with owner-safe target validation', () => {
     const owners = createUnifiedRuleOwners(
       createUnifiedProfileItems(
@@ -563,6 +701,43 @@ describe('unified UI view models', () => {
       'DOMAIN-SUFFIX,linkedin.com,PROXY',
       'DOMAIN-SUFFIX,github.com,PROXY'
     ])
+  })
+
+  it('bulk imports MATCH as a single value-less rule', () => {
+    const result = importUnifiedRulesToPatch({
+      patch: createEmptyUnifiedRulePatchFile(),
+      type: 'MATCH',
+      target: 'PROXY',
+      text: 'all traffic'
+    })
+
+    assert.equal(result.added, 1)
+    assert.equal(result.invalid.length, 0)
+    assert.deepEqual(result.patch.prepend, ['MATCH,PROXY'])
+  })
+
+  it('imports process-name rules with spaces for VPN and Mihomo owners', () => {
+    const vpnResult = importUnifiedRulesToPatch({
+      patch: createEmptyUnifiedRulePatchFile(),
+      type: 'PROCESS-NAME',
+      target: 'PROXY',
+      text: 'Yandex Helper\nChatGPT'
+    })
+
+    assert.equal(vpnResult.added, 2)
+    assert.equal(vpnResult.invalid.length, 0)
+    assert.deepEqual(vpnResult.patch.prepend, [
+      'PROCESS-NAME,Yandex Helper,PROXY',
+      'PROCESS-NAME,ChatGPT,PROXY'
+    ])
+
+    const mihomoResult = appendUnifiedManagedRule(
+      createEmptyUnifiedRulePatchFile(),
+      'PROCESS-NAME,Yandex Helper,PROXY'
+    )
+
+    assert.equal(mihomoResult.added, true)
+    assert.deepEqual(mihomoResult.patch.prepend, ['PROCESS-NAME,Yandex Helper,PROXY'])
   })
 
   it('prevents duplicate managed rule appends from stale UI state', () => {

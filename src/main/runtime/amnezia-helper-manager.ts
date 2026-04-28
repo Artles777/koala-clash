@@ -59,11 +59,22 @@ export type AmneziaHelperSessionStatus =
   | 'idle'
   | 'starting'
   | 'running'
+  | 'restarting'
   | 'stopping'
   | 'stopped'
   | 'failed'
 export type AmneziaHelperReadinessStatus = 'unknown' | 'checking' | 'ready' | 'failed'
 export type AmneziaHelperConfigStatus = 'not_generated' | 'generated' | 'failed'
+export type AmneziaHelperDesiredState = 'idle' | 'running' | 'stopped'
+export type AmneziaHelperExitReason =
+  | 'requested_stop'
+  | 'app_shutdown'
+  | 'profile_changed'
+  | 'runtime_disabled'
+  | 'startup_conditions_invalid'
+  | 'unexpected_exit'
+  | 'startup_failed'
+  | 'crash_loop'
 
 export interface AmneziaHelperSession {
   profileId: string
@@ -92,6 +103,12 @@ export interface AmneziaHelperSession {
   lastConnectivityLatencyMs?: number
   connectivityResult?: AmneziaHelperConnectivityResult
   udpCapability: AmneziaHelperUdpCapability
+  desiredState: AmneziaHelperDesiredState
+  managedByApp: boolean
+  restartCount: number
+  lastExitReason?: AmneziaHelperExitReason
+  lastRestartAt?: number
+  crashLoopDetected: boolean
 }
 
 export interface AmneziaHelperLogEntry {
@@ -116,6 +133,9 @@ export interface AmneziaHelperManagerDependencies {
   allocatePort?: (host: string) => Promise<number>
   readinessTimeoutMs?: number
   readinessPollIntervalMs?: number
+  maxRestartAttempts?: number
+  restartBaseDelayMs?: number
+  restartMaxDelayMs?: number
   validateConnectivity?: (
     input: ValidateAmneziaHelperConnectivityInput
   ) => Promise<AmneziaHelperConnectivityResult>
@@ -139,9 +159,15 @@ interface AmneziaHelperEntry {
   logs: AmneziaHelperLogEntry[]
   closePromise?: Promise<void>
   resolveClose?: () => void
+  restartTimer?: NodeJS.Timeout
 }
 
-const activeStatuses = new Set<AmneziaHelperSessionStatus>(['starting', 'running', 'stopping'])
+const activeStatuses = new Set<AmneziaHelperSessionStatus>([
+  'starting',
+  'running',
+  'restarting',
+  'stopping'
+])
 const maxLogEntries = 200
 
 let defaultManager: AmneziaHelperManager | undefined
@@ -163,6 +189,9 @@ export class AmneziaHelperManager {
   private readonly allocatePort: (host: string) => Promise<number>
   private readonly readinessTimeoutMs: number
   private readonly readinessPollIntervalMs: number
+  private readonly maxRestartAttempts: number
+  private readonly restartBaseDelayMs: number
+  private readonly restartMaxDelayMs: number
   private readonly validateConnectivityImpl: (
     input: ValidateAmneziaHelperConnectivityInput
   ) => Promise<AmneziaHelperConnectivityResult>
@@ -195,6 +224,9 @@ export class AmneziaHelperManager {
     this.allocatePort = dependencies.allocatePort ?? allocateLocalPort
     this.readinessTimeoutMs = dependencies.readinessTimeoutMs ?? 5000
     this.readinessPollIntervalMs = dependencies.readinessPollIntervalMs ?? 100
+    this.maxRestartAttempts = dependencies.maxRestartAttempts ?? 3
+    this.restartBaseDelayMs = dependencies.restartBaseDelayMs ?? 1000
+    this.restartMaxDelayMs = dependencies.restartMaxDelayMs ?? 10000
     this.validateConnectivityImpl =
       dependencies.validateConnectivity ?? runAmneziaHelperConnectivityValidation
     this.validateUdpCapabilityImpl =
@@ -208,9 +240,52 @@ export class AmneziaHelperManager {
   }
 
   async start(profileId: string): Promise<AmneziaHelperSession> {
+    return this.startOwned(profileId, { managedByApp: false })
+  }
+
+  async ensureManaged(profileId: string): Promise<AmneziaHelperSession> {
+    const existing = this.sessions.get(profileId)
+    if (existing && activeStatuses.has(existing.session.status)) {
+      const preflight = await this.preflight(profileId)
+      if (!preflight.canStart) {
+        await this.stop(profileId, 'startup_conditions_invalid')
+        return this.createFailedPreflightSession(profileId, preflight, {
+          managedByApp: true,
+          desiredState: 'running',
+          restartCount: existing.session.restartCount,
+          lastExitReason: 'startup_conditions_invalid'
+        })
+      }
+      existing.session.desiredState = 'running'
+      existing.session.managedByApp = true
+      this.appendLog(existing, 'manager', 'app supervisor confirmed helper should be running')
+      return cloneSession(existing.session)
+    }
+
+    const active = this.getActiveEntry()
+    if (active && active.session.profileId !== profileId) {
+      await this.stop(active.session.profileId, 'profile_changed')
+    }
+
+    return this.startOwned(profileId, { managedByApp: true })
+  }
+
+  private async startOwned(
+    profileId: string,
+    options: {
+      managedByApp: boolean
+      restartCount?: number
+      lastRestartAt?: number
+      lastExitReason?: AmneziaHelperExitReason
+    }
+  ): Promise<AmneziaHelperSession> {
     const existing = this.sessions.get(profileId)
     if (existing && activeStatuses.has(existing.session.status)) {
       this.appendLog(existing, 'manager', 'duplicate start ignored for active profile')
+      if (options.managedByApp) {
+        existing.session.desiredState = 'running'
+        existing.session.managedByApp = true
+      }
       return cloneSession(existing.session)
     }
 
@@ -224,7 +299,13 @@ export class AmneziaHelperManager {
     await mkdir(this.runtimeDir, { recursive: true })
     const preflight = await this.preflight(profileId)
     if (!preflight.canStart) {
-      return this.createFailedPreflightSession(profileId, preflight)
+      return this.createFailedPreflightSession(profileId, preflight, {
+        managedByApp: options.managedByApp,
+        desiredState: options.managedByApp ? 'running' : 'stopped',
+        restartCount: options.restartCount ?? 0,
+        lastRestartAt: options.lastRestartAt,
+        lastExitReason: options.lastExitReason ?? 'startup_failed'
+      })
     }
 
     const plan = await this.loadExecutionPlan(profileId)
@@ -250,7 +331,13 @@ export class AmneziaHelperManager {
       configStatus: 'not_generated',
       connectivityStatus: 'unknown',
       validationStage: 'not_started',
-      udpCapability: createInitialAmneziaHelperUdpCapability(backend.mode, this.now())
+      udpCapability: createInitialAmneziaHelperUdpCapability(backend.mode, this.now()),
+      desiredState: 'running',
+      managedByApp: options.managedByApp,
+      restartCount: options.restartCount ?? 0,
+      lastRestartAt: options.lastRestartAt,
+      lastExitReason: options.lastExitReason,
+      crashLoopDetected: false
     }
 
     let runtimeConfig: AmneziaHelperRuntimeConfig
@@ -389,10 +476,25 @@ export class AmneziaHelperManager {
     })
   }
 
-  async stop(profileId?: string): Promise<AmneziaHelperSession> {
+  async stop(
+    profileId?: string,
+    reason: AmneziaHelperExitReason = 'requested_stop'
+  ): Promise<AmneziaHelperSession> {
     const entry = this.getActiveEntry(profileId)
     if (!entry) return this.getStatus(profileId)
-    if (!entry.child || entry.session.status === 'stopping') return cloneSession(entry.session)
+    this.cancelRestart(entry)
+    entry.session.desiredState = 'stopped'
+    entry.session.lastExitReason = reason
+    if (!entry.child || entry.session.status === 'stopping') {
+      if (entry.session.status === 'restarting') {
+        entry.session.status = 'stopped'
+        entry.session.readiness = 'unknown'
+        entry.session.connectivityStatus = 'unknown'
+        entry.session.stoppedAt = this.now()
+        await this.publishRoutingState(entry)
+      }
+      return cloneSession(entry.session)
+    }
 
     entry.session.status = 'stopping'
     this.appendLog(entry, 'manager', 'stopping helper backend')
@@ -402,11 +504,11 @@ export class AmneziaHelperManager {
     return cloneSession(entry.session)
   }
 
-  async stopAll(): Promise<void> {
+  async stopAll(reason: AmneziaHelperExitReason = 'requested_stop'): Promise<void> {
     const activeEntries = Array.from(this.sessions.values()).filter((entry) =>
       activeStatuses.has(entry.session.status)
     )
-    await Promise.all(activeEntries.map((entry) => this.stop(entry.session.profileId)))
+    await Promise.all(activeEntries.map((entry) => this.stop(entry.session.profileId, reason)))
   }
 
   getStatus(profileId?: string): AmneziaHelperSession {
@@ -426,7 +528,11 @@ export class AmneziaHelperManager {
       configStatus: 'not_generated',
       connectivityStatus: 'unknown',
       validationStage: 'not_started',
-      udpCapability: createInitialAmneziaHelperUdpCapability(this.backendMode, this.now())
+      udpCapability: createInitialAmneziaHelperUdpCapability(this.backendMode, this.now()),
+      desiredState: 'idle',
+      managedByApp: false,
+      restartCount: 0,
+      crashLoopDetected: false
     }
   }
 
@@ -448,7 +554,15 @@ export class AmneziaHelperManager {
 
   private async createFailedPreflightSession(
     profileId: string,
-    preflight: AmneziaHelperStartupPreflightResult
+    preflight: AmneziaHelperStartupPreflightResult,
+    options: {
+      managedByApp?: boolean
+      desiredState?: AmneziaHelperDesiredState
+      restartCount?: number
+      lastRestartAt?: number
+      lastExitReason?: AmneziaHelperExitReason
+      crashLoopDetected?: boolean
+    } = {}
   ): Promise<AmneziaHelperSession> {
     const sessionId = this.createSessionId()
     const primaryBlocker = preflight.blockingReasons[0]
@@ -490,7 +604,13 @@ export class AmneziaHelperManager {
       tunBypass: preflight.tunBypass,
       connectivityStatus: 'failed',
       validationStage: 'not_started',
-      udpCapability: createInitialAmneziaHelperUdpCapability(preflight.backend.mode, this.now())
+      udpCapability: createInitialAmneziaHelperUdpCapability(preflight.backend.mode, this.now()),
+      desiredState: options.desiredState ?? 'stopped',
+      managedByApp: options.managedByApp ?? false,
+      restartCount: options.restartCount ?? 0,
+      lastRestartAt: options.lastRestartAt,
+      lastExitReason: options.lastExitReason ?? 'startup_failed',
+      crashLoopDetected: options.crashLoopDetected ?? false
     }
     const entry: AmneziaHelperEntry = { session, logs: [] }
     this.sessions.set(profileId, entry)
@@ -653,6 +773,16 @@ export class AmneziaHelperManager {
         entry.session.startupDiagnostics.splice(0, entry.session.startupDiagnostics.length - 50)
       }
     }
+    if (
+      backendDiagnostic?.kind === 'local_proxy_ready' ||
+      backendDiagnostic?.kind === 'helper_ready' ||
+      backendDiagnostic?.kind === 'handshake_observed'
+    ) {
+      if (activeStatuses.has(entry.session.status)) {
+        entry.session.readiness = 'ready'
+        void this.publishRoutingState(entry)
+      }
+    }
     if (backendDiagnostic && isBackendRuntimeFailureDiagnostic(backendDiagnostic.kind)) {
       this.pushRuntimeDiagnostic(
         entry,
@@ -711,7 +841,9 @@ export class AmneziaHelperManager {
     code: number | null,
     signal: NodeJS.Signals | null
   ): Promise<void> {
-    if (entry.session.status === 'stopping' || code === 0) {
+    const requestedStop =
+      entry.session.status === 'stopping' || entry.session.desiredState !== 'running'
+    if (requestedStop) {
       entry.session.status = 'stopped'
       entry.session.readiness = 'unknown'
       entry.session.connectivityStatus = 'unknown'
@@ -722,6 +854,7 @@ export class AmneziaHelperManager {
       entry.session.readiness = 'failed'
       entry.session.connectivityStatus = 'failed'
       entry.session.lastError = `Helper exited unexpectedly code=${code} signal=${signal ?? ''}`
+      entry.session.lastExitReason = 'unexpected_exit'
       this.appendLog(entry, 'manager', entry.session.lastError)
     }
 
@@ -730,6 +863,9 @@ export class AmneziaHelperManager {
     await this.publishTunBypassState(entry, undefined)
     await this.cleanupEntry(entry)
     entry.resolveClose?.()
+    if (!requestedStop) {
+      await this.scheduleRestartIfNeeded(entry)
+    }
   }
 
   private async failEntry(
@@ -742,6 +878,7 @@ export class AmneziaHelperManager {
     entry.session.readiness = 'failed'
     entry.session.connectivityStatus = 'failed'
     entry.session.lastError = error instanceof Error ? error.message : String(error)
+    entry.session.lastExitReason = 'startup_failed'
     entry.session.stoppedAt = this.now()
     this.pushRuntimeDiagnostic(
       entry,
@@ -764,6 +901,74 @@ export class AmneziaHelperManager {
     if (entry.session.tempConfigPath) {
       await rm(entry.session.tempConfigPath, { force: true }).catch(() => {})
     }
+  }
+
+  private async scheduleRestartIfNeeded(entry: AmneziaHelperEntry): Promise<void> {
+    if (!entry.session.managedByApp || entry.session.desiredState !== 'running') return
+
+    const nextRestartCount = entry.session.restartCount + 1
+    if (nextRestartCount > this.maxRestartAttempts) {
+      entry.session.status = 'failed'
+      entry.session.crashLoopDetected = true
+      entry.session.lastExitReason = 'crash_loop'
+      entry.session.lastError = `Amnezia helper crash loop detected after ${entry.session.restartCount} restart attempt(s)`
+      this.pushRuntimeDiagnostic(entry, 'startup_timeout', 'supervisor', entry.session.lastError, {
+        restartCount: entry.session.restartCount,
+        maxRestartAttempts: this.maxRestartAttempts
+      })
+      this.appendLog(entry, 'manager', entry.session.lastError)
+      await this.publishRoutingState(entry)
+      return
+    }
+
+    const delayMs = Math.min(
+      this.restartBaseDelayMs * 2 ** Math.max(0, nextRestartCount - 1),
+      this.restartMaxDelayMs
+    )
+    entry.session.status = 'restarting'
+    entry.session.readiness = 'checking'
+    entry.session.restartCount = nextRestartCount
+    entry.session.lastRestartAt = this.now() + delayMs
+    entry.session.lastExitReason = 'unexpected_exit'
+    this.appendLog(
+      entry,
+      'manager',
+      `app supervisor restarting helper in ${delayMs}ms attempt=${nextRestartCount}/${this.maxRestartAttempts}`
+    )
+    await this.publishRoutingState(entry)
+
+    entry.restartTimer = setTimeout(() => {
+      void this.restartManagedEntry(entry.session.profileId, nextRestartCount)
+    }, delayMs)
+  }
+
+  private async restartManagedEntry(profileId: string, restartCount: number): Promise<void> {
+    const entry = this.sessions.get(profileId)
+    if (!entry || entry.session.desiredState !== 'running' || !entry.session.managedByApp) return
+    this.cancelRestart(entry)
+    this.sessions.delete(profileId)
+    try {
+      await this.startOwned(profileId, {
+        managedByApp: true,
+        restartCount,
+        lastRestartAt: this.now(),
+        lastExitReason: 'unexpected_exit'
+      })
+    } catch (error) {
+      const failedSession = this.sessions.get(profileId)?.session
+      if (failedSession) {
+        failedSession.status = 'failed'
+        failedSession.readiness = 'failed'
+        failedSession.lastError = error instanceof Error ? error.message : String(error)
+        failedSession.lastExitReason = 'startup_failed'
+      }
+    }
+  }
+
+  private cancelRestart(entry: AmneziaHelperEntry): void {
+    if (!entry.restartTimer) return
+    clearTimeout(entry.restartTimer)
+    entry.restartTimer = undefined
   }
 
   private isChildAlive(child: ChildProcess): boolean {
@@ -889,6 +1094,32 @@ export class AmneziaHelperManager {
       )
       this.appendLog(entry, 'manager', entry.session.lastError)
       await this.publishRoutingState(entry)
+      return
+    }
+
+    if (entry.session.backendMode === 'production') {
+      const deadline = this.now() + this.readinessTimeoutMs
+      while (this.now() < deadline && activeStatuses.has(entry.session.status)) {
+        if (entry.session.readiness === 'ready') return
+        await new Promise((resolve) => setTimeout(resolve, this.readinessPollIntervalMs))
+      }
+
+      if (activeStatuses.has(entry.session.status) && entry.session.readiness !== 'ready') {
+        entry.session.status = 'failed'
+        entry.session.readiness = 'failed'
+        entry.session.connectivityStatus = 'failed'
+        entry.session.lastError =
+          'Amnezia helper did not report local proxy readiness before timeout'
+        this.pushRuntimeDiagnostic(
+          entry,
+          'startup_timeout',
+          'endpoint_readiness',
+          entry.session.lastError
+        )
+        this.appendLog(entry, 'manager', entry.session.lastError)
+        await this.publishRoutingState(entry)
+        entry.child?.kill('SIGKILL')
+      }
       return
     }
 
@@ -1032,24 +1263,27 @@ export async function ensureCurrentAmneziaHelperRunning(): Promise<
   ])
   const profileConfig = await getProfileConfig()
   const current = profileConfig.items?.find((item) => item.id === profileConfig.current)
+  const manager = await getDefaultAmneziaHelperManager()
 
   if (!current || (current.profileKind !== 'amnezia' && current.compatibility !== 'amnezia')) {
+    await manager.stopAll('profile_changed')
     return undefined
   }
 
   if (!getProfileRuntimeCapabilities(current).canActivate) {
+    await manager.stopAll('startup_conditions_invalid')
     return undefined
   }
 
-  const status = await getAmneziaHelperStatus(current.id)
+  const status = manager.getStatus(current.id)
   if (
     status.profileId === current.id &&
-    (status.status === 'starting' || status.status === 'running')
+    (status.status === 'starting' || status.status === 'running' || status.status === 'restarting')
   ) {
-    return status
+    return manager.ensureManaged(current.id)
   }
 
-  return startAmneziaHelper(current.id)
+  return manager.ensureManaged(current.id)
 }
 
 export async function syncCurrentAmneziaHelperWithRuntimeMode(): Promise<void> {
@@ -1061,7 +1295,7 @@ export async function syncCurrentAmneziaHelperWithRuntimeMode(): Promise<void> {
   if (mihomoConfig.tun?.enable || appConfig.proxyMode) {
     await ensureCurrentAmneziaHelperRunning()
   } else {
-    await stopAllAmneziaHelpers()
+    await stopAllAmneziaHelpers('runtime_disabled')
   }
 }
 
@@ -1080,15 +1314,21 @@ export async function stopAmneziaHelper(profileId?: string): Promise<AmneziaHelp
       configStatus: 'not_generated',
       connectivityStatus: 'unknown',
       validationStage: 'not_started',
-      udpCapability: createInitialAmneziaHelperUdpCapability('production')
+      udpCapability: createInitialAmneziaHelperUdpCapability('production'),
+      desiredState: 'idle',
+      managedByApp: false,
+      restartCount: 0,
+      crashLoopDetected: false
     }
   }
 
   return defaultManager.stop(profileId)
 }
 
-export async function stopAllAmneziaHelpers(): Promise<void> {
-  if (defaultManager) await defaultManager.stopAll()
+export async function stopAllAmneziaHelpers(
+  reason: AmneziaHelperExitReason = 'requested_stop'
+): Promise<void> {
+  if (defaultManager) await defaultManager.stopAll(reason)
 }
 
 export async function getAmneziaHelperStatus(profileId?: string): Promise<AmneziaHelperSession> {
@@ -1106,7 +1346,11 @@ export async function getAmneziaHelperStatus(profileId?: string): Promise<Amnezi
       configStatus: 'not_generated',
       connectivityStatus: 'unknown',
       validationStage: 'not_started',
-      udpCapability: createInitialAmneziaHelperUdpCapability('production')
+      udpCapability: createInitialAmneziaHelperUdpCapability('production'),
+      desiredState: 'idle',
+      managedByApp: false,
+      restartCount: 0,
+      crashLoopDetected: false
     }
   }
 
@@ -1272,7 +1516,14 @@ function cloneDiagnostic(
 }
 
 function isBackendRuntimeFailureDiagnostic(kind: AmneziaHelperBackendDiagnosticKind): boolean {
-  return kind !== 'config_accepted' && kind !== 'local_proxy_ready'
+  return ![
+    'config_accepted',
+    'local_proxy_ready',
+    'handshake_pending',
+    'handshake_observed',
+    'helper_ready',
+    'connectivity_verified'
+  ].includes(kind)
 }
 
 function mapBackendDiagnosticKindToRuntimeCategory(
@@ -1294,7 +1545,16 @@ function mapBackendDiagnosticKindToRuntimeCategory(
     case 'backend_unavailable':
       return 'backend_unavailable'
     case 'unsupported_config':
+    case 'profile_requires_gateway_expansion':
       return 'config_generation_failure'
+    case 'socks_connect_failed':
+      return 'endpoint_unreachable'
+    case 'proxy_handshake_failure':
+      return 'proxy_handshake_failure'
+    case 'upstream_request_failure':
+      return 'upstream_request_failure'
+    case 'validation_timeout':
+      return 'validation_timeout'
     case 'startup_failed':
     default:
       return 'startup_timeout'

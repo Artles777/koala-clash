@@ -75,6 +75,7 @@ interface AppConfig {
   expandProxyGroups?: boolean
   sysProxy: ISysProxyConfig
   proxyMode: boolean
+  directRulesBypassTun?: boolean
   maxLogDays: number
   userAgent?: string
   delayTestConcurrency?: number
@@ -182,7 +183,12 @@ type AmneziaHelperRoutingUnavailableReason =
   | 'missing_endpoint'
   | 'name_conflict'
   | 'stub_backend'
-type AmneziaHelperRuleType = 'DOMAIN' | 'DOMAIN-SUFFIX' | 'DOMAIN-KEYWORD' | 'IP-CIDR'
+type AmneziaHelperRuleType =
+  | 'DOMAIN'
+  | 'DOMAIN-SUFFIX'
+  | 'DOMAIN-KEYWORD'
+  | 'IP-CIDR'
+  | 'PROCESS-NAME'
 type AmneziaHelperRuleBulkIssueCode =
   | 'empty_value'
   | 'invalid_value'
@@ -459,9 +465,20 @@ type AmneziaHelperSessionStatus =
   | 'idle'
   | 'starting'
   | 'running'
+  | 'restarting'
   | 'stopping'
   | 'stopped'
   | 'failed'
+type AmneziaHelperDesiredState = 'idle' | 'running' | 'stopped'
+type AmneziaHelperExitReason =
+  | 'requested_stop'
+  | 'app_shutdown'
+  | 'profile_changed'
+  | 'runtime_disabled'
+  | 'startup_conditions_invalid'
+  | 'unexpected_exit'
+  | 'startup_failed'
+  | 'crash_loop'
 
 interface AmneziaHelperSession {
   profileId: string
@@ -494,6 +511,12 @@ interface AmneziaHelperSession {
   lastConnectivityLatencyMs?: number
   connectivityResult?: AmneziaHelperConnectivityResult
   udpCapability: AmneziaHelperUdpCapability
+  desiredState: AmneziaHelperDesiredState
+  managedByApp: boolean
+  restartCount: number
+  lastExitReason?: AmneziaHelperExitReason
+  lastRestartAt?: number
+  crashLoopDetected: boolean
 }
 
 interface AmneziaHelperConnectivityStageResult {
@@ -662,6 +685,10 @@ type AmneziaHelperSupportStatusCode =
   | 'connectivity_failed'
   | 'helper_not_running'
   | 'helper_starting'
+  | 'helper_managed_by_app'
+  | 'helper_restarting'
+  | 'helper_crash_loop'
+  | 'helper_dev_override'
   | 'proxy_ready_not_validated'
   | 'helper_ready_validated'
   | 'helper_rules_inactive'
@@ -672,6 +699,10 @@ type AmneziaHelperSupportStatusCode =
   | 'tun_domain_rules_degraded'
   | 'tun_domain_rules_unlikely'
   | 'tun_domain_rules_blocked'
+  | 'direct_tun_bypass_active'
+  | 'direct_tun_bypass_partial'
+  | 'direct_tun_bypass_blocked'
+  | 'direct_process_name_bypass_unsupported'
   | 'udp_supported'
   | 'udp_tcp_only'
 
@@ -774,6 +805,7 @@ interface AmneziaHelperBackendValidationSnapshot {
 interface AmneziaHelperBackendSupportSnapshot {
   mode: AmneziaHelperBackendMode
   kind: 'production' | 'prototype' | 'stub' | 'unavailable'
+  pathSource: 'bundled' | 'override' | 'development'
   available: boolean
   command: string
   executablePath: string
@@ -781,6 +813,15 @@ interface AmneziaHelperBackendSupportSnapshot {
   validation?: AmneziaHelperBackendValidationSnapshot
   helperChecksumSha256?: string
   helperVersion?: string
+}
+
+interface AmneziaHelperLifecycleSupportSnapshot {
+  desiredState: AmneziaHelperDesiredState
+  managedByApp: boolean
+  restartCount: number
+  lastExitReason?: AmneziaHelperExitReason
+  lastRestartAt?: number
+  crashLoopDetected: boolean
 }
 
 interface AmneziaHelperSessionSupportSnapshot {
@@ -813,6 +854,7 @@ interface AmneziaHelperSessionSupportSnapshot {
   lastConnectivityLatencyMs?: number
   connectivityResult?: AmneziaHelperConnectivityResult
   udpCapability: AmneziaHelperUdpCapability
+  lifecycle: AmneziaHelperLifecycleSupportSnapshot
 }
 
 interface AmneziaHelperRulePacksSupportSummary {
@@ -841,6 +883,19 @@ interface AmneziaHelperTunSupportSnapshot {
   helperRulesIpCidrOnly: boolean
   helperRulesDomainCount: number
   helperRulesIpCidrCount: number
+  directTunBypassEnabled: boolean
+  directTunBypassActive: boolean
+  directTunBypassStatus: 'disabled' | 'not_required' | 'resolved' | 'partial' | 'failed'
+  directTunBypassRuleCount: number
+  directTunBypassResolvedAddressCount: number
+  directTunBypassWarnings: string[]
+  unsupportedDirectBypassRules: Array<{
+    rule: string
+    ruleType: string
+    value?: string
+    reasonCode: string
+    message: string
+  }>
 }
 
 interface AmneziaHelperUdpSupportSnapshot {
@@ -897,6 +952,11 @@ interface AmneziaHelperSupportSummaryExport {
     | 'helperBypassActive'
     | 'helperBypassIpsCount'
     | 'helperBypassResolutionStatus'
+    | 'directTunBypassEnabled'
+    | 'directTunBypassActive'
+    | 'directTunBypassStatus'
+    | 'directTunBypassRuleCount'
+    | 'directTunBypassResolvedAddressCount'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'
   >

@@ -59,6 +59,8 @@ interface MihomoTunConfig {
   'auto-redirect'?: boolean
   'auto-detect-interface'?: boolean
   'dns-hijack'?: string[]
+  'inet4-address'?: string[]
+  'inet6-address'?: string[]
   device?: string
   mtu?: number
   'strict-route'?: boolean

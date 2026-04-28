@@ -6,6 +6,7 @@ export type AmneziaHelperRuleReliabilityReason =
   | 'tun_disabled'
   | 'no_enabled_helper_rules'
   | 'ip_cidr_only'
+  | 'non_domain_rules_only'
   | 'domain_rules_fake_ip_dns_hijack'
   | 'domain_rules_dns_disabled'
   | 'domain_rules_dns_hijack_missing'
@@ -17,8 +18,10 @@ export interface AmneziaHelperRuleTypeSummary {
   totalEnabledRules: number
   domainRuleCount: number
   ipCidrRuleCount: number
+  processRuleCount: number
   hasDomainRules: boolean
   hasIpCidrRules: boolean
+  hasProcessRules: boolean
   hasIpCidrOnly: boolean
 }
 
@@ -91,7 +94,9 @@ export function evaluateAmneziaHelperTunRuleReliability(
   }
 
   if (!ruleTypes.hasDomainRules) {
-    return createResult(input, ruleTypes, 'reliable', ['ip_cidr_only'])
+    return createResult(input, ruleTypes, 'reliable', [
+      ruleTypes.hasIpCidrOnly ? 'ip_cidr_only' : 'non_domain_rules_only'
+    ])
   }
 
   if (input.dnsEnabled === false) {
@@ -121,13 +126,16 @@ export function summarizeHelperRuleTypes(
   const enabledRules = rules.filter((rule) => rule.enabled)
   const domainRuleCount = enabledRules.filter((rule) => domainRuleTypes.has(rule.type)).length
   const ipCidrRuleCount = enabledRules.filter((rule) => rule.type === 'IP-CIDR').length
+  const processRuleCount = enabledRules.filter((rule) => rule.type === 'PROCESS-NAME').length
 
   return {
     totalEnabledRules: enabledRules.length,
     domainRuleCount,
     ipCidrRuleCount,
+    processRuleCount,
     hasDomainRules: domainRuleCount > 0,
     hasIpCidrRules: ipCidrRuleCount > 0,
+    hasProcessRules: processRuleCount > 0,
     hasIpCidrOnly: enabledRules.length > 0 && domainRuleCount === 0 && ipCidrRuleCount > 0
   }
 }
@@ -179,6 +187,8 @@ function explain(reason: AmneziaHelperRuleReliabilityReason): string {
       return 'No enabled AMNEZIA_HELPER rules are configured.'
     case 'ip_cidr_only':
       return 'Only IP-CIDR helper rules are enabled; domain DNS handling is not required.'
+    case 'non_domain_rules_only':
+      return 'Only non-domain helper rules are enabled; domain DNS handling is not required.'
     case 'domain_rules_fake_ip_dns_hijack':
       return 'Domain helper rules are expected to match because TUN DNS hijack is enabled with fake-ip DNS mode.'
     case 'domain_rules_dns_disabled':

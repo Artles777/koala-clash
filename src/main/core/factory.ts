@@ -14,13 +14,22 @@ import * as path from 'path'
 import { injectAmneziaHelperRoutingTarget } from '../../core/routing/amnezia-helper-routing'
 import {
   ensureAmneziaCompatibilityFallbackRule,
-  ensureAmneziaCompatibilityProxyGroup
+  ensureAmneziaCompatibilityProxyGroup,
+  injectAmneziaCompatibilityTcpOnlyUdpGuardRules
 } from '../../core/routing/amnezia-compatibility-proxy-group'
 import { getActiveAmneziaHelperRoutingTarget } from '../runtime/amnezia-helper-routing-state'
 import { injectAmneziaHelperRules } from '../../core/routing/amnezia-helper-rules'
 import { getAmneziaHelperRules } from '../config/amneziaHelperRules'
 import { injectAmneziaHelperTunBypass } from '../../core/routing/amnezia-helper-tun-bypass'
 import { getActiveAmneziaHelperTunBypass } from '../runtime/amnezia-helper-tun-bypass-state'
+import { ensureAmneziaTunRuntimeCompatibility } from '../../core/routing/amnezia-tun-runtime-compatibility'
+import { ensureMihomoRuleProviderPresets } from '../../core/routing/mihomo-rule-provider-presets'
+import {
+  injectDirectTunBypass,
+  TELEGRAM_DIRECT_TUN_BYPASS_PRESET
+} from '../../core/routing/direct-tun-bypass'
+import { resolveRuntimeDirectTunBypass } from '../runtime/direct-tun-bypass-resolver'
+import { updateDirectTunBypassState } from '../runtime/direct-tun-bypass-state'
 
 let runtimeConfigStr: string,
   rawProfileStr: string,
@@ -161,8 +170,22 @@ export async function generateProfile(): Promise<void> {
       await getAmneziaHelperRules()
     ).config as MihomoConfig
   }
+  if (currentIsAmneziaProfile) {
+    profile = injectAmneziaCompatibilityTcpOnlyUdpGuardRules(
+      profile,
+      helperRoutingResult.target
+    ) as MihomoConfig
+  }
   profile = injectAmneziaHelperTunBypass(profile, getActiveAmneziaHelperTunBypass())
     .config as MihomoConfig
+  const directTunBypass = await resolveRuntimeDirectTunBypass({
+    config: profile,
+    enabled: appConfig.directRulesBypassTun ?? true
+  })
+  updateDirectTunBypassState(directTunBypass)
+  profile = injectDirectTunBypass(profile, directTunBypass).config as MihomoConfig
+  ensureDefaultSnifferSkipDstAddresses(profile)
+  profile = ensureMihomoRuleProviderPresets(profile) as MihomoConfig
 
   const tunEnabled = profile.tun?.enable ?? false
   if (!tunEnabled && !proxyModeEnabled) {
@@ -174,6 +197,9 @@ export async function generateProfile(): Promise<void> {
   }
 
   await cleanProfile(profile, controlDns, controlSniff, controlTun)
+  if (currentIsAmneziaProfile) {
+    profile = ensureAmneziaTunRuntimeCompatibility(profile).config as MihomoConfig
+  }
 
   runtimeConfig = profile
   runtimeConfigStr = stringifyYaml(profile)
@@ -381,6 +407,19 @@ function cleanSnifferConfig(profile: MihomoConfig, controlSniff: boolean): void 
   if (!profile.sniffer?.enable) {
     delete (profile as Partial<MihomoConfig>).sniffer
   }
+}
+
+function ensureDefaultSnifferSkipDstAddresses(profile: MihomoConfig): void {
+  if (!profile.sniffer?.enable) return
+
+  const current = Array.isArray(profile.sniffer['skip-dst-address'])
+    ? profile.sniffer['skip-dst-address']
+    : []
+  const merged = [
+    ...new Set([...current, ...TELEGRAM_DIRECT_TUN_BYPASS_PRESET.routeExcludeAddresses])
+  ].sort()
+
+  profile.sniffer['skip-dst-address'] = merged
 }
 
 function cleanProxyConfigs(profile: MihomoConfig): void {

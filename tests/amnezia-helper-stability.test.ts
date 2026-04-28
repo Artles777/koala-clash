@@ -241,7 +241,11 @@ function createSession(
     configStatus: 'generated',
     connectivityStatus: status === 'failed' ? 'failed' : 'unknown',
     validationStage: 'not_started',
-    udpCapability: createInitialAmneziaHelperUdpCapability('proxy-prototype')
+    udpCapability: createInitialAmneziaHelperUdpCapability('proxy-prototype'),
+    desiredState: status === 'idle' ? 'idle' : status === 'running' ? 'running' : 'stopped',
+    managedByApp: false,
+    restartCount: 0,
+    crashLoopDetected: false
   }
   return {
     ...session,

@@ -38,7 +38,7 @@ export interface AmneziaHelperRoutingTarget {
 
 export interface AmneziaHelperRoutingSessionLike {
   profileId: string
-  status: 'idle' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed'
+  status: 'idle' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'failed'
   readiness: 'unknown' | 'checking' | 'ready' | 'failed'
   backendMode?: 'production' | 'proxy-prototype' | 'stub'
   localEndpoint?: AmneziaHelperRoutingEndpoint

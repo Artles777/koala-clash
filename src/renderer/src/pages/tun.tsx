@@ -16,7 +16,7 @@ import SettingCard from '@renderer/components/base/base-setting-card'
 import SettingItem from '@renderer/components/base/base-setting-item'
 import EditableList from '@renderer/components/base/base-list-editor'
 import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
-import { restartCore, setupFirewall } from '@renderer/utils/ipc'
+import { mihomoHotReloadConfig, restartCore, setupFirewall } from '@renderer/utils/ipc'
 import { platform } from '@renderer/utils/init'
 import React, { useState } from 'react'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
@@ -26,7 +26,11 @@ const Tun: React.FC = () => {
   const { t } = useTranslation()
   const { controledMihomoConfig, patchControledMihomoConfig } = useControledMihomoConfig()
   const { appConfig, patchAppConfig } = useAppConfig()
-  const { autoSetDNSMode = 'exec', controlTun = false } = appConfig || {}
+  const {
+    autoSetDNSMode = 'exec',
+    controlTun = false,
+    directRulesBypassTun = true
+  } = appConfig || {}
   const { tun } = controledMihomoConfig || {}
   const [loading, setLoading] = useState(false)
   const {
@@ -212,6 +216,19 @@ const Tun: React.FC = () => {
               checked={values.autoDetectInterface}
               onCheckedChange={(value) => {
                 setValues({ ...values, autoDetectInterface: value })
+              }}
+            />
+          </SettingItem>
+          <SettingItem title={t('pages.tun.directRulesBypassTun')} divider>
+            <Switch
+              checked={directRulesBypassTun}
+              onCheckedChange={async (value) => {
+                try {
+                  await patchAppConfig({ directRulesBypassTun: value })
+                  await mihomoHotReloadConfig()
+                } catch (e) {
+                  toast.error(`${e}`)
+                }
               }}
             />
           </SettingItem>

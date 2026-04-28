@@ -11,8 +11,14 @@ import {
 import { createAmneziaHelperUdpCapability } from '../src/core/routing/amnezia-helper-udp-capability'
 import {
   ensureAmneziaCompatibilityFallbackRule,
-  ensureAmneziaCompatibilityProxyGroup
+  ensureAmneziaCompatibilityProxyGroup,
+  injectAmneziaCompatibilityTcpOnlyUdpGuardRules
 } from '../src/core/routing/amnezia-compatibility-proxy-group'
+import {
+  ensureMihomoRuleProviderPresets,
+  KOALA_RU_BUNDLE_RULE_PROVIDER,
+  KOALA_RU_BUNDLE_RULE_PROVIDER_NAME
+} from '../src/core/routing/mihomo-rule-provider-presets'
 
 describe('Amnezia helper routing integration', () => {
   it('generates a TCP-only Mihomo local proxy outbound until UDP is validated', () => {
@@ -27,14 +33,14 @@ describe('Amnezia helper routing integration', () => {
 
     assert.equal(target.status, 'injected')
     assert.equal(injected.injected, true)
-    assert.deepEqual(injected.config.proxies?.at(-1), {
+    assert.deepEqual(lastItem(injected.config.proxies), {
       name: AMNEZIA_HELPER_OUTBOUND_NAME,
       type: 'socks5',
       server: '127.0.0.1',
       port: 19080,
       udp: false
     })
-    assert.deepEqual(injected.config['proxy-groups']?.at(-1), {
+    assert.deepEqual(lastItem(injected.config['proxy-groups']), {
       name: AMNEZIA_HELPER_GROUP_NAME,
       type: 'select',
       proxies: [AMNEZIA_HELPER_OUTBOUND_NAME]
@@ -57,7 +63,7 @@ describe('Amnezia helper routing integration', () => {
     const injected = injectAmneziaHelperRoutingTarget(config, target)
 
     assert.equal(injected.injected, true)
-    assert.equal(injected.config.proxies?.at(-1)?.udp, true)
+    assert.equal(lastItem(injected.config.proxies)?.udp, true)
   })
 
   it('does not generate a routing target for stopped helper sessions', () => {
@@ -157,6 +163,69 @@ describe('Amnezia helper routing integration', () => {
 
     assert.deepEqual(config.rules, ['DOMAIN-SUFFIX,linkedin.com,PROXY', 'MATCH,DIRECT'])
   })
+
+  it('adds TCP-only UDP guard rules for Amnezia PROXY rules when helper UDP is not advertised', () => {
+    const target = createAmneziaHelperRoutingTarget(createReadySession())
+    const config = injectAmneziaCompatibilityTcpOnlyUdpGuardRules(
+      {
+        rules: [
+          'DOMAIN-SUFFIX,linkedin.com,PROXY',
+          'PROCESS-NAME,ChatGPT,PROXY',
+          'DOMAIN-SUFFIX,example.com,DIRECT',
+          'MATCH,PROXY',
+          'MATCH,DIRECT'
+        ]
+      },
+      target
+    )
+
+    assert.deepEqual(config.rules, [
+      'AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,linkedin.com)),REJECT',
+      'AND,((NETWORK,UDP),(DST-PORT,443),(PROCESS-NAME,ChatGPT)),REJECT',
+      'AND,((NETWORK,UDP),(DST-PORT,443)),REJECT',
+      'DOMAIN-SUFFIX,linkedin.com,PROXY',
+      'PROCESS-NAME,ChatGPT,PROXY',
+      'DOMAIN-SUFFIX,example.com,DIRECT',
+      'MATCH,PROXY',
+      'MATCH,DIRECT'
+    ])
+  })
+
+  it('does not add TCP-only UDP guard rules when helper UDP is validated', () => {
+    const target = createAmneziaHelperRoutingTarget({
+      ...createReadySession(),
+      udpCapability: createAmneziaHelperUdpCapability(
+        'supported',
+        true,
+        'udp_associate_validated',
+        1710000000000
+      )
+    })
+    const config = injectAmneziaCompatibilityTcpOnlyUdpGuardRules(
+      {
+        rules: ['DOMAIN-SUFFIX,linkedin.com,PROXY', 'MATCH,DIRECT']
+      },
+      target
+    )
+
+    assert.deepEqual(config.rules, ['DOMAIN-SUFFIX,linkedin.com,PROXY', 'MATCH,DIRECT'])
+  })
+
+  it('injects the RU bundle rule-provider only when the runtime rules reference it', () => {
+    const withoutPreset = ensureMihomoRuleProviderPresets({
+      rules: ['MATCH,DIRECT']
+    })
+
+    assert.equal(withoutPreset['rule-providers'], undefined)
+
+    const withPreset = ensureMihomoRuleProviderPresets({
+      rules: [`RULE-SET,${KOALA_RU_BUNDLE_RULE_PROVIDER_NAME},PROXY`, 'MATCH,DIRECT']
+    })
+
+    assert.deepEqual(withPreset['rule-providers'], {
+      [KOALA_RU_BUNDLE_RULE_PROVIDER_NAME]: KOALA_RU_BUNDLE_RULE_PROVIDER
+    })
+  })
 })
 
 function createReadySession(): AmneziaHelperRoutingSessionLike {
@@ -170,4 +239,8 @@ function createReadySession(): AmneziaHelperRoutingSessionLike {
       protocol: 'socks5'
     }
   }
+}
+
+function lastItem<T>(items: T[] | undefined): T | undefined {
+  return items ? items[items.length - 1] : undefined
 }

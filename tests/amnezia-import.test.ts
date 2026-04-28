@@ -29,6 +29,40 @@ describe('Amnezia vpn:// import', () => {
     assert.equal(draft.profile.auth.clientPrivateKey, 'client-private-key')
     assert.equal(draft.profile.peer.publicKey, 'server-public-key')
     assert.equal(draft.profile.amnezia.container, 'amnezia-awg')
+    assert.equal(draft.profile.amnezia.obfuscation.junkPacketCount, '4')
+  })
+
+  it('normalizes AmneziaWG short obfuscation fields used by vpn keys', () => {
+    const uri = encodeQtCompressedVpnUri(
+      JSON.stringify(
+        createAmneziaJsonPayload({
+          Jc: '6',
+          Jmin: '8',
+          Jmax: '80',
+          S1: '28',
+          S2: '131',
+          H1: '1601146936',
+          H2: '493334274',
+          I1: '4189671953'
+        })
+      )
+    )
+
+    const draft = parseAmneziaVpnKey(uri, {
+      sourceId: 'source-short-obfuscation',
+      profileId: 'profile-short-obfuscation',
+      importedAt
+    })
+
+    assert.equal(draft.profile.protocol, 'amneziawg')
+    assert.equal(draft.profile.amnezia.obfuscation.Jc, '6')
+    assert.equal(draft.profile.amnezia.obfuscation.Jmin, '8')
+    assert.equal(draft.profile.amnezia.obfuscation.Jmax, '80')
+    assert.equal(draft.profile.amnezia.obfuscation.S1, '28')
+    assert.equal(draft.profile.amnezia.obfuscation.S2, '131')
+    assert.equal(draft.profile.amnezia.obfuscation.H1, '1601146936')
+    assert.equal(draft.profile.amnezia.obfuscation.H2, '493334274')
+    assert.equal(draft.profile.amnezia.obfuscation.I1, '4189671953')
   })
 
   it('rejects malformed vpn:// input', () => {

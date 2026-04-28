@@ -109,7 +109,15 @@ async function getImportedSourcesConfig(): Promise<ImportedSourcesConfig> {
 }
 
 async function getNormalizedProfilesConfig(): Promise<NormalizedProfilesConfig> {
-  return readYamlConfig(normalizedProfilesPath(), { items: [] })
+  const config = await readYamlConfig<NormalizedProfilesConfig>(normalizedProfilesPath(), {
+    items: []
+  })
+  const sources = await getImportedSourcesConfig()
+  const repaired = repairMissingAmneziaRuntimeFields(config, sources.items)
+  if (repaired.changed) {
+    await writeNormalizedProfilesConfig(repaired.config)
+  }
+  return repaired.config
 }
 
 async function writeImportedSourcesConfig(config: ImportedSourcesConfig): Promise<void> {
@@ -126,6 +134,62 @@ async function readYamlConfig<T>(path: string, fallback: T): Promise<T> {
   const content = await readFile(path, 'utf-8')
   const parsed = parseYaml<T>(content)
   return parsed || fallback
+}
+
+function repairMissingAmneziaRuntimeFields(
+  config: NormalizedProfilesConfig,
+  sources: ImportedSource[]
+): { config: NormalizedProfilesConfig; changed: boolean } {
+  const sourceById = new Map(sources.map((source) => [source.id, source]))
+  let changed = false
+
+  const items = (config.items ?? []).map((profile) => {
+    if (profile.protocol !== 'amneziawg') return profile
+    if (Object.keys(profile.amnezia?.obfuscation ?? {}).length > 0) return profile
+
+    const source = sourceById.get(profile.sourceId)
+    if (!source || source.type !== 'amnezia_vpn_uri') return profile
+
+    try {
+      const reparsed = parseAmneziaVpnKey(source.raw, {
+        sourceId: profile.sourceId,
+        profileId: profile.id,
+        importedAt: profile.metadata.importedAt
+      })
+      const obfuscation = reparsed.profile.amnezia.obfuscation
+      if (Object.keys(obfuscation).length === 0) return profile
+
+      changed = true
+      return {
+        ...profile,
+        amnezia: {
+          ...profile.amnezia,
+          defaultContainer:
+            profile.amnezia.defaultContainer ?? reparsed.profile.amnezia.defaultContainer,
+          container: profile.amnezia.container ?? reparsed.profile.amnezia.container,
+          protocolVersion:
+            profile.amnezia.protocolVersion ?? reparsed.profile.amnezia.protocolVersion,
+          obfuscation
+        },
+        metadata: {
+          ...profile.metadata,
+          warnings: Array.from(
+            new Set([
+              ...(profile.metadata.warnings ?? []),
+              'amnezia_obfuscation_restored_from_source'
+            ])
+          )
+        }
+      }
+    } catch {
+      return profile
+    }
+  })
+
+  return {
+    config: { ...config, items },
+    changed
+  }
 }
 
 function createAmneziaProfileItem(profile: NormalizedProfile): ProfileItem {

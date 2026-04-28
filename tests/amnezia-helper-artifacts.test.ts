@@ -8,6 +8,7 @@ import { afterEach, describe, it } from 'node:test'
 import {
   AmneziaHelperArtifactReport,
   AmneziaHelperArtifactTarget,
+  getAmneziaHelperArtifactSourcePath,
   getAmneziaHelperArtifactStagedPath,
   normalizeAmneziaHelperArtifactTarget,
   prepareAmneziaHelperArtifacts,
@@ -66,6 +67,19 @@ describe('Amnezia helper artifact packaging', () => {
     assert.equal(validation.summary.validated, 1)
   })
 
+  it('skips the helper-artifacts/amnezia-helper directory when resolving nested binaries', async () => {
+    const { sourceRoot } = await createTempLayout()
+    const sourcePath = await createSourceArtifact(sourceRoot, winX64)
+
+    assert.equal(
+      getAmneziaHelperArtifactSourcePath({
+        sourceRoot,
+        target: winX64
+      }),
+      sourcePath
+    )
+  })
+
   it('fails clearly when a required source artifact is missing', async () => {
     const { sourceRoot, stagingRoot } = await createTempLayout()
 
@@ -121,6 +135,7 @@ describe('Amnezia helper artifact packaging', () => {
         'tsx',
         'scripts/amnezia-helper-artifacts.ts',
         'prepare',
+        '--',
         '--source-root',
         sourceRoot,
         '--staging-root',

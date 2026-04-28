@@ -200,7 +200,7 @@ describe('Amnezia helper manager', () => {
         (diagnostic) => diagnostic.category === 'tun_bypass_resolution_failure'
       )
     )
-    assert.equal(tunUpdates.at(-1)?.status, 'failed')
+    assert.equal(tunUpdates[tunUpdates.length - 1]?.status, 'failed')
   })
 
   it('classifies production helper spawn failures as backend_spawn_failure', async () => {
@@ -221,6 +221,128 @@ describe('Amnezia helper manager', () => {
         (diagnostic) => diagnostic.category === 'backend_spawn_failure'
       )
     )
+  })
+
+  it('maps real helper JSONL proxy readiness into an injectable routing target', async () => {
+    const helperPath = await createExecutable('amnezia-helper')
+    const routingUpdates: AmneziaHelperSession[] = []
+    const { manager } = await createManager({
+      backendMode: 'production',
+      productionBackendPath: helperPath,
+      spawnProcess: createJsonlProductionSpawn([
+        {
+          level: 'info',
+          event: 'config.validated',
+          message: 'config is valid'
+        },
+        {
+          level: 'info',
+          event: 'proxy.listening',
+          message: 'local SOCKS5 listener is bound'
+        },
+        {
+          level: 'warn',
+          event: 'readiness.handshake_pending',
+          message: 'backend and SOCKS are started, but peer handshake has not been observed yet'
+        }
+      ]),
+      syncRoutingState: (session) => {
+        routingUpdates.push(session)
+      }
+    })
+
+    const started = await manager.start('amnezia-1')
+    const ready = await waitForReadiness(manager, 'amnezia-1', 'ready')
+
+    assert.equal(started.backendMode, 'production')
+    assert.deepEqual(started.args.slice(0, 2), ['run', '--config'])
+    assert.equal(ready.routingTarget?.status, 'injected')
+    assert.ok(
+      ready.startupDiagnostics.some((message) => message.includes('local SOCKS5 listener is bound'))
+    )
+    assert.ok(routingUpdates.some((session) => session.routingTarget?.status === 'injected'))
+  })
+
+  it('auto-starts a managed helper for a supported active VPN profile', async () => {
+    const helperPath = await createExecutable('amnezia-helper')
+    const { manager } = await createManager({
+      backendMode: 'production',
+      productionBackendPath: helperPath,
+      spawnProcess: createJsonlProductionSpawn([proxyListeningEvent()])
+    })
+
+    const started = await manager.ensureManaged('amnezia-1')
+    const ready = await waitForReadiness(manager, 'amnezia-1', 'ready')
+
+    assert.equal(started.managedByApp, true)
+    assert.equal(ready.desiredState, 'running')
+    assert.equal(ready.managedByApp, true)
+    assert.equal(ready.routingTarget?.status, 'injected')
+  })
+
+  it('auto-stops the previous managed helper when the active VPN profile changes', async () => {
+    const helperPath = await createExecutable('amnezia-helper')
+    const { manager } = await createManager({
+      backendMode: 'production',
+      productionBackendPath: helperPath,
+      spawnProcess: createJsonlProductionSpawn([proxyListeningEvent()])
+    })
+
+    await manager.ensureManaged('amnezia-1')
+    await waitForReadiness(manager, 'amnezia-1', 'ready')
+    await manager.ensureManaged('amnezia-2')
+    const next = await waitForReadiness(manager, 'amnezia-2', 'ready')
+    const previous = manager.getStatus('amnezia-1')
+
+    assert.equal(previous.status, 'stopped')
+    assert.equal(previous.desiredState, 'stopped')
+    assert.equal(previous.lastExitReason, 'profile_changed')
+    assert.equal(next.managedByApp, true)
+  })
+
+  it('restarts a managed helper after an unexpected crash', async () => {
+    const helperPath = await createExecutable('amnezia-helper')
+    const { manager } = await createManager({
+      backendMode: 'production',
+      productionBackendPath: helperPath,
+      spawnProcess: createSequenceProductionSpawn([
+        { lines: [proxyListeningEvent()], closeAfterMs: 10, exitCode: 42 },
+        { lines: [proxyListeningEvent()] }
+      ]),
+      maxRestartAttempts: 2,
+      restartBaseDelayMs: 10
+    })
+
+    await manager.ensureManaged('amnezia-1')
+    const restarted = await waitForRestartCount(manager, 'amnezia-1', 1)
+
+    assert.equal(restarted.status, 'running')
+    assert.equal(restarted.readiness, 'ready')
+    assert.equal(restarted.restartCount, 1)
+    assert.equal(restarted.managedByApp, true)
+    assert.equal(restarted.crashLoopDetected, false)
+  })
+
+  it('blocks supervised restarts after a crash loop', async () => {
+    const helperPath = await createExecutable('amnezia-helper')
+    const { manager } = await createManager({
+      backendMode: 'production',
+      productionBackendPath: helperPath,
+      spawnProcess: createSequenceProductionSpawn([
+        { lines: [proxyListeningEvent()], closeAfterMs: 10, exitCode: 42 },
+        { lines: [proxyListeningEvent()], closeAfterMs: 10, exitCode: 42 }
+      ]),
+      maxRestartAttempts: 1,
+      restartBaseDelayMs: 10
+    })
+
+    await manager.ensureManaged('amnezia-1')
+    const failed = await waitForCrashLoop(manager, 'amnezia-1')
+
+    assert.equal(failed.status, 'failed')
+    assert.equal(failed.crashLoopDetected, true)
+    assert.equal(failed.lastExitReason, 'crash_loop')
+    assert.ok(failed.runtimeDiagnostics.some((diagnostic) => diagnostic.stage === 'supervisor'))
   })
 
   it('tracks connectivity validation transitions and retains the last result', async () => {
@@ -305,6 +427,8 @@ async function createManager(
     ) => Promise<AmneziaHelperConnectivityResult>
     syncRoutingState?: (session: AmneziaHelperSession) => Promise<void> | void
     isTunEnabled?: () => Promise<boolean> | boolean
+    maxRestartAttempts?: number
+    restartBaseDelayMs?: number
     resolveTunBypass?: (input: {
       runtimeConfig: AmneziaHelperRuntimeConfig
       tunEnabled: boolean
@@ -328,6 +452,8 @@ async function createManager(
     validateConnectivity: input.validateConnectivity,
     syncRoutingState: input.syncRoutingState,
     isTunEnabled: input.isTunEnabled,
+    maxRestartAttempts: input.maxRestartAttempts,
+    restartBaseDelayMs: input.restartBaseDelayMs,
     resolveTunBypass: input.resolveTunBypass,
     syncTunBypassState: input.syncTunBypassState,
     loadExecutionPlan: async (profileId) =>
@@ -364,6 +490,99 @@ function createFailingSpawn(error: Error): typeof nodeSpawn {
     process.nextTick(() => child.emit('error', error))
     return child
   }) as typeof nodeSpawn
+}
+
+function createJsonlProductionSpawn(lines: Array<Record<string, unknown>>): typeof nodeSpawn {
+  return (() => {
+    const child = new EventEmitter() as ChildProcess
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    let closed = false
+    Object.assign(child, {
+      stdout,
+      stderr,
+      pid: 4243,
+      killed: false,
+      kill: () => {
+        if (!closed) {
+          closed = true
+          Object.assign(child, { killed: true })
+          process.nextTick(() => child.emit('close', 0, null))
+        }
+        return true
+      }
+    })
+    process.nextTick(() => {
+      child.emit('spawn')
+      for (const line of lines) {
+        stdout.write(`${JSON.stringify(line)}\n`)
+      }
+    })
+    return child
+  }) as typeof nodeSpawn
+}
+
+function createSequenceProductionSpawn(
+  sequence: Array<{
+    lines: Array<Record<string, unknown>>
+    closeAfterMs?: number
+    exitCode?: number
+  }>
+): typeof nodeSpawn {
+  let index = 0
+  return (() => {
+    const behavior = sequence[Math.min(index, sequence.length - 1)]
+    index += 1
+    return createJsonlChild(behavior.lines, behavior.closeAfterMs, behavior.exitCode)
+  }) as typeof nodeSpawn
+}
+
+function createJsonlChild(
+  lines: Array<Record<string, unknown>>,
+  closeAfterMs?: number,
+  exitCode = 0
+): ChildProcess {
+  const child = new EventEmitter() as ChildProcess
+  const stdout = new PassThrough()
+  const stderr = new PassThrough()
+  let closed = false
+  Object.assign(child, {
+    stdout,
+    stderr,
+    pid: 4244,
+    killed: false,
+    kill: () => {
+      if (!closed) {
+        closed = true
+        Object.assign(child, { killed: true })
+        process.nextTick(() => child.emit('close', 0, null))
+      }
+      return true
+    }
+  })
+  process.nextTick(() => {
+    child.emit('spawn')
+    for (const line of lines) {
+      stdout.write(`${JSON.stringify(line)}\n`)
+    }
+    if (closeAfterMs !== undefined) {
+      setTimeout(() => {
+        if (!closed) {
+          closed = true
+          child.emit('close', exitCode, null)
+        }
+      }, closeAfterMs)
+    }
+  })
+  return child
+}
+
+function proxyListeningEvent(): Record<string, unknown> {
+  return {
+    level: 'info',
+    event: 'proxy.listening',
+    message: 'local SOCKS5 listener is bound'
+  }
 }
 
 function createConnectivityResult(
@@ -432,6 +651,43 @@ async function waitForStatus(
   }
 
   assert.fail(`Timed out waiting for ${status}`)
+}
+
+async function waitForRestartCount(
+  manager: AmneziaHelperManager,
+  profileId: string,
+  restartCount: number,
+  timeoutMs = 3000
+) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const session = manager.getStatus(profileId)
+    if (
+      session.restartCount === restartCount &&
+      session.status === 'running' &&
+      session.readiness === 'ready'
+    ) {
+      return session
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+
+  assert.fail(`Timed out waiting for restart count ${restartCount}`)
+}
+
+async function waitForCrashLoop(
+  manager: AmneziaHelperManager,
+  profileId: string,
+  timeoutMs = 3000
+) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const session = manager.getStatus(profileId)
+    if (session.crashLoopDetected) return session
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+
+  assert.fail('Timed out waiting for crash loop detection')
 }
 
 async function waitForLog(
