@@ -75,7 +75,12 @@ interface AppConfig {
   expandProxyGroups?: boolean
   sysProxy: ISysProxyConfig
   proxyMode: boolean
+  directExcludeEnabled?: boolean
+  directExcludeMode?: 'conservative' | 'full_supported_types'
   directRulesBypassTun?: boolean
+  learnedProcessBypassEnabled?: boolean
+  learnedProcessBypassTtlMs?: number
+  nativeProcessBypassEnabled?: boolean
   maxLogDays: number
   userAgent?: string
   delayTestConcurrency?: number
@@ -655,6 +660,19 @@ interface AmneziaHelperRulePackImportResult {
 }
 
 type AmneziaHelperSupportSeverity = 'info' | 'warning' | 'blocker'
+type EffectiveBypassMode =
+  | 'true_bypass'
+  | 'partial_bypass'
+  | 'learned_bypass'
+  | 'direct_only'
+  | 'unsupported'
+type NativeProcessBypassStatus = 'disabled' | 'unsupported' | 'available' | 'active' | 'blocked'
+type LinuxNativeProcessBypassPrerequisiteStatus =
+  | 'supported'
+  | 'missing_prerequisites'
+  | 'insufficient_privileges'
+  | 'not_linux'
+  | 'partially_supported'
 type AmneziaHelperTunDnsEnhancedMode = 'fake-ip' | 'redir-host' | 'normal' | 'unknown'
 type AmneziaHelperRuleReliability = 'reliable' | 'degraded' | 'unlikely' | 'blocked'
 type AmneziaHelperRuleReliabilityReason =
@@ -703,6 +721,14 @@ type AmneziaHelperSupportStatusCode =
   | 'direct_tun_bypass_partial'
   | 'direct_tun_bypass_blocked'
   | 'direct_process_name_bypass_unsupported'
+  | 'learned_process_bypass_active'
+  | 'learned_process_bypass_observing'
+  | 'learned_process_bypass_stale'
+  | 'learned_process_bypass_unsupported'
+  | 'native_process_bypass_available'
+  | 'native_process_bypass_active'
+  | 'native_process_bypass_unsupported'
+  | 'native_process_bypass_blocked'
   | 'udp_supported'
   | 'udp_tcp_only'
 
@@ -883,12 +909,56 @@ interface AmneziaHelperTunSupportSnapshot {
   helperRulesIpCidrOnly: boolean
   helperRulesDomainCount: number
   helperRulesIpCidrCount: number
+  directExcludeEnabled: boolean
+  directExcludeActive: boolean
+  directExcludeMode: 'conservative' | 'full_supported_types'
+  directExcludeOverallStatus: 'active' | 'partial' | 'blocked' | 'inactive'
+  directExcludeRuleCount: number
+  directExcludeResolvedAddressCount: number
+  directExcludePartialCount: number
+  directExcludeFailureCount: number
+  directExcludeWarnings: string[]
   directTunBypassEnabled: boolean
   directTunBypassActive: boolean
   directTunBypassStatus: 'disabled' | 'not_required' | 'resolved' | 'partial' | 'failed'
   directTunBypassRuleCount: number
   directTunBypassResolvedAddressCount: number
   directTunBypassWarnings: string[]
+  learnedBypassEnabled: boolean
+  learnedBypassActive: boolean
+  learnedBypassEntryCount: number
+  learnedBypassProcessCount: number
+  learnedBypassExpiredCount: number
+  learnedBypassSupportedOnPlatform: boolean
+  learnedBypassWarnings: string[]
+  learnedBypassOverallStatus: 'inactive' | 'observing' | 'active' | 'stale' | 'unsupported'
+  nativeProcessBypassEnabled: boolean
+  nativeProcessBypassSupportedOnPlatform: boolean
+  nativeProcessBypassActive: boolean
+  nativeProcessBypassRequiresPrivileges: boolean
+  nativeProcessBypassRequiresService: boolean
+  nativeProcessBypassStatus: NativeProcessBypassStatus
+  nativeProcessBypassMechanism?: 'linux-cgroup-fwmark'
+  nativeProcessBypassDiagnostics: string[]
+  nativeProcessBypassPrerequisiteStatus?: LinuxNativeProcessBypassPrerequisiteStatus
+  nativeProcessBypassBoundPidCount: number
+  processDirectEffectiveBypassMode: EffectiveBypassMode
+  bypassCapabilityWarnings: string[]
+  bypassCapabilitySummary: {
+    trueBypassRuleCount: number
+    partialBypassRuleCount: number
+    learnedBypassRuleCount: number
+    directOnlyRuleCount: number
+    unsupportedRuleCount: number
+    processDirectRuleCount: number
+  }
+  unsupportedDirectExcludeRules: Array<{
+    rule: string
+    ruleType: string
+    value?: string
+    reasonCode: string
+    message: string
+  }>
   unsupportedDirectBypassRules: Array<{
     rule: string
     ruleType: string
@@ -952,11 +1022,30 @@ interface AmneziaHelperSupportSummaryExport {
     | 'helperBypassActive'
     | 'helperBypassIpsCount'
     | 'helperBypassResolutionStatus'
+    | 'directExcludeEnabled'
+    | 'directExcludeActive'
+    | 'directExcludeMode'
+    | 'directExcludeOverallStatus'
+    | 'directExcludeRuleCount'
+    | 'directExcludeResolvedAddressCount'
+    | 'directExcludePartialCount'
+    | 'directExcludeFailureCount'
     | 'directTunBypassEnabled'
     | 'directTunBypassActive'
     | 'directTunBypassStatus'
     | 'directTunBypassRuleCount'
     | 'directTunBypassResolvedAddressCount'
+    | 'learnedBypassEnabled'
+    | 'learnedBypassActive'
+    | 'learnedBypassOverallStatus'
+    | 'learnedBypassEntryCount'
+    | 'learnedBypassProcessCount'
+    | 'learnedBypassExpiredCount'
+    | 'nativeProcessBypassEnabled'
+    | 'nativeProcessBypassSupportedOnPlatform'
+    | 'nativeProcessBypassActive'
+    | 'nativeProcessBypassStatus'
+    | 'processDirectEffectiveBypassMode'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'
   >

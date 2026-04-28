@@ -1105,22 +1105,62 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                   <RuntimeRow
                     label={t('profile.directTunBypass')}
                     value={
-                      supportSnapshot?.tun.directTunBypassActive
+                      supportSnapshot?.tun.directExcludeActive
                         ? t('profile.tunBypassActive')
                         : t('profile.tunBypassInactive')
                     }
                   />
                   <RuntimeRow
                     label={t('profile.directTunBypassRules')}
-                    value={String(supportSnapshot?.tun.directTunBypassRuleCount ?? 0)}
+                    value={String(supportSnapshot?.tun.directExcludeRuleCount ?? 0)}
                   />
                   <RuntimeRow
                     label={t('profile.directTunBypassIps')}
-                    value={String(supportSnapshot?.tun.directTunBypassResolvedAddressCount ?? 0)}
+                    value={String(supportSnapshot?.tun.directExcludeResolvedAddressCount ?? 0)}
                   />
                   <RuntimeRow
                     label={t('profile.directTunBypassStatus')}
-                    value={supportSnapshot?.tun.directTunBypassStatus ?? '-'}
+                    value={supportSnapshot?.tun.directExcludeOverallStatus ?? '-'}
+                  />
+                  <RuntimeRow
+                    label={t('profile.learnedProcessBypass')}
+                    value={
+                      supportSnapshot?.tun.learnedBypassActive
+                        ? t('profile.tunBypassActive')
+                        : t('profile.tunBypassInactive')
+                    }
+                  />
+                  <RuntimeRow
+                    label={t('profile.learnedProcessBypassEntries')}
+                    value={String(supportSnapshot?.tun.learnedBypassEntryCount ?? 0)}
+                  />
+                  <RuntimeRow
+                    label={t('profile.learnedProcessBypassStatus')}
+                    value={supportSnapshot?.tun.learnedBypassOverallStatus ?? '-'}
+                  />
+                  <RuntimeRow
+                    label={t('profile.nativeProcessBypass')}
+                    value={
+                      supportSnapshot?.tun.nativeProcessBypassActive
+                        ? t('profile.tunBypassActive')
+                        : t('profile.tunBypassInactive')
+                    }
+                  />
+                  <RuntimeRow
+                    label={t('profile.nativeProcessBypassStatus')}
+                    value={supportSnapshot?.tun.nativeProcessBypassStatus ?? '-'}
+                  />
+                  <RuntimeRow
+                    label={t('profile.nativeProcessBypassPrerequisites')}
+                    value={supportSnapshot?.tun.nativeProcessBypassPrerequisiteStatus ?? '-'}
+                  />
+                  <RuntimeRow
+                    label={t('profile.nativeProcessBypassPids')}
+                    value={String(supportSnapshot?.tun.nativeProcessBypassBoundPidCount ?? 0)}
+                  />
+                  <RuntimeRow
+                    label={t('profile.processDirectBypassMode')}
+                    value={supportSnapshot?.tun.processDirectEffectiveBypassMode ?? '-'}
                   />
                   <RuntimeRow
                     label={t('profile.tunDnsHijack')}
@@ -1173,17 +1213,40 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                   </div>
                 )}
 
-                {supportSnapshot?.tun.directTunBypassEnabled &&
-                  supportSnapshot.tun.directTunBypassWarnings.length > 0 && (
+                {supportSnapshot?.tun.directExcludeEnabled &&
+                  supportSnapshot.tun.directExcludeWarnings.length > 0 && (
                     <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
                       <div className="font-medium">{t('profile.directTunBypassWarning')}</div>
                       <div className="mt-1 space-y-1 text-muted-foreground">
-                        {supportSnapshot.tun.directTunBypassWarnings.slice(0, 3).map((warning) => (
+                        {supportSnapshot.tun.directExcludeWarnings.slice(0, 3).map((warning) => (
                           <div key={warning}>{warning}</div>
                         ))}
                       </div>
                     </div>
                   )}
+
+                {supportSnapshot?.tun.learnedBypassEnabled &&
+                  supportSnapshot.tun.learnedBypassWarnings.length > 0 && (
+                    <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                      <div className="font-medium">{t('profile.learnedProcessBypassWarning')}</div>
+                      <div className="mt-1 space-y-1 text-muted-foreground">
+                        {supportSnapshot.tun.learnedBypassWarnings.slice(0, 3).map((warning) => (
+                          <div key={warning}>{warning}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                {(supportSnapshot?.tun.bypassCapabilityWarnings?.length ?? 0) > 0 && (
+                  <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                    <div className="font-medium">{t('profile.bypassCapabilityWarning')}</div>
+                    <div className="mt-1 space-y-1 text-muted-foreground">
+                      {supportSnapshot?.tun.bypassCapabilityWarnings?.slice(0, 3).map((warning) => (
+                        <div key={warning}>{warning}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {supportUdp && !supportUdp.runtimeAdvertisesUdp && (
                   <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">

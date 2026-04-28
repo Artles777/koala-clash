@@ -5,6 +5,8 @@ import {
   normalizeRouteExcludeAddresses
 } from './amnezia-helper-tun-bypass'
 
+export type DirectExcludeMode = 'conservative' | 'full_supported_types'
+export type DirectExcludeOverallStatus = 'active' | 'partial' | 'blocked' | 'inactive'
 export type DirectTunBypassStatus = 'disabled' | 'not_required' | 'resolved' | 'partial' | 'failed'
 
 export type DirectTunBypassWarningCode =
@@ -15,8 +17,8 @@ export type DirectTunBypassWarningCode =
   | 'domain_suffix_apex_only'
   | 'domain_route_is_ip_based'
   | 'domain_keyword_unsupported'
-  | 'process_name_preset_applied'
   | 'process_name_unsupported'
+  | 'process_path_unsupported'
   | 'rule_type_unsupported'
   | 'invalid_ip_cidr'
 
@@ -38,12 +40,17 @@ export interface UnsupportedDirectTunBypassRule {
 
 export interface DirectTunBypassResolution {
   enabled: boolean
+  mode: DirectExcludeMode
   tunEnabled: boolean
   status: DirectTunBypassStatus
+  directExcludeOverallStatus: DirectExcludeOverallStatus
   active: boolean
   directRuleCount: number
+  excludableRuleCount: number
   supportedRuleCount: number
   unsupportedRuleCount: number
+  partialRuleCount: number
+  failedRuleCount: number
   resolvedAddressCount: number
   routeExcludeAddresses: string[]
   warnings: DirectTunBypassWarning[]
@@ -71,6 +78,7 @@ export type DirectTunBypassLookup = (hostname: string) => Promise<DirectTunBypas
 export interface ResolveDirectTunBypassOptions<T extends DirectTunBypassConfig> {
   config: T
   enabled: boolean
+  mode?: DirectExcludeMode
   lookup?: DirectTunBypassLookup
   now?: () => number
 }
@@ -89,50 +97,23 @@ export interface ParsedDirectRule {
   target: string
 }
 
-export interface DirectProcessTunBypassPreset {
-  id: string
-  processNames: string[]
-  routeExcludeAddresses: string[]
-}
-
-export const TELEGRAM_DIRECT_TUN_BYPASS_PRESET: DirectProcessTunBypassPreset = {
-  id: 'telegram',
-  processNames: ['telegram', 'telegram desktop'],
-  routeExcludeAddresses: [
-    '91.105.192.0/23',
-    '91.108.4.0/22',
-    '91.108.8.0/21',
-    '91.108.16.0/21',
-    '91.108.56.0/22',
-    '95.161.64.0/20',
-    '149.154.160.0/20',
-    '185.76.151.0/24',
-    '2001:67c:4e8::/48',
-    '2001:b28:f23c::/47',
-    '2001:b28:f23f::/48',
-    '2a0a:f280:203::/48'
-  ]
-}
-
-export const DIRECT_PROCESS_TUN_BYPASS_PRESETS: DirectProcessTunBypassPreset[] = [
-  TELEGRAM_DIRECT_TUN_BYPASS_PRESET
-]
-
 export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
   options: ResolveDirectTunBypassOptions<T>
 ): Promise<DirectTunBypassResolution> {
   const tunEnabled = options.config.tun?.enable === true
   const now = options.now ?? Date.now
+  const mode = options.mode ?? 'conservative'
 
   if (!options.enabled) {
     return createResolution({
       enabled: false,
+      mode,
       tunEnabled,
       status: 'disabled',
       warnings: [
         {
           code: 'feature_disabled',
-          message: 'DIRECT rule TUN bypass compatibility is disabled.'
+          message: 'DIRECT exclude compatibility is disabled.'
         }
       ],
       now
@@ -142,12 +123,13 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
   if (!tunEnabled) {
     return createResolution({
       enabled: true,
+      mode,
       tunEnabled: false,
       status: 'not_required',
       warnings: [
         {
           code: 'tun_disabled',
-          message: 'TUN is disabled, so DIRECT rule bypass injection is not required.'
+          message: 'TUN is disabled, so DIRECT exclude injection is not required.'
         }
       ],
       now
@@ -158,12 +140,13 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
   if (directRules.length === 0) {
     return createResolution({
       enabled: true,
+      mode,
       tunEnabled: true,
       status: 'not_required',
       warnings: [
         {
           code: 'no_direct_rules',
-          message: 'No DIRECT rules were found for TUN bypass compatibility.'
+          message: 'No DIRECT rules were found for DIRECT exclude compatibility.'
         }
       ],
       now
@@ -174,15 +157,19 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
   const unsupportedRules: UnsupportedDirectTunBypassRule[] = []
   const routeExcludeAddresses: string[] = []
   let supportedRuleCount = 0
+  let partialRuleCount = 0
+  let failedRuleCount = 0
 
   for (const rule of directRules) {
     switch (rule.type) {
-      case 'IP-CIDR': {
+      case 'IP-CIDR':
+      case 'IP-CIDR6': {
         supportedRuleCount += 1
         const cidr = normalizeCidr(rule.value ?? '')
         if (cidr) {
           routeExcludeAddresses.push(cidr)
         } else {
+          failedRuleCount += 1
           warnings.push(createRuleWarning('invalid_ip_cidr', rule, 'Invalid IP-CIDR DIRECT rule.'))
         }
         break
@@ -192,22 +179,24 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
         supportedRuleCount += 1
         const hostname = normalizeDomainValue(rule.value ?? '')
         if (!hostname || !options.lookup) {
+          failedRuleCount += 1
           warnings.push(
             createRuleWarning(
               'domain_resolution_failed',
               rule,
-              `Could not resolve ${rule.type} DIRECT rule for TUN bypass.`
+              `Could not resolve ${rule.type} DIRECT rule for DIRECT exclude.`
             )
           )
           break
         }
 
         if (rule.type === 'DOMAIN-SUFFIX') {
+          partialRuleCount += 1
           warnings.push(
             createRuleWarning(
               'domain_suffix_apex_only',
               rule,
-              'DOMAIN-SUFFIX DIRECT bypass resolves only the suffix apex; subdomains may need explicit DOMAIN or IP-CIDR rules.'
+              'DOMAIN-SUFFIX DIRECT exclude resolves only the suffix apex; subdomains need explicit DOMAIN or IP-CIDR rules for true bypass.'
             )
           )
         }
@@ -216,6 +205,7 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
           const results = await options.lookup(hostname)
           const ips = normalizeIpList(results.map((result) => result.address))
           if (ips.length === 0) {
+            failedRuleCount += 1
             warnings.push(
               createRuleWarning(
                 'domain_resolution_failed',
@@ -225,15 +215,18 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
             )
           } else {
             routeExcludeAddresses.push(...ips.map(formatRouteExcludeAddress))
-            warnings.push(
-              createRuleWarning(
-                'domain_route_is_ip_based',
-                rule,
-                'Domain DIRECT bypass is injected as IP route exclusions and may affect other hosts sharing the same resolved IPs.'
+            if (rule.type === 'DOMAIN-SUFFIX') {
+              warnings.push(
+                createRuleWarning(
+                  'domain_route_is_ip_based',
+                  rule,
+                  'DOMAIN-SUFFIX DIRECT exclude is injected as IP route exclusions for the suffix apex only.'
+                )
               )
-            )
+            }
           }
         } catch (error) {
+          failedRuleCount += 1
           warnings.push(
             createRuleWarning(
               'domain_resolution_failed',
@@ -249,41 +242,29 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
           createUnsupportedRule(
             'domain_keyword_unsupported',
             rule,
-            'DOMAIN-KEYWORD cannot be safely translated into deterministic TUN route exclusions.'
+            'DOMAIN-KEYWORD DIRECT cannot be safely translated into deterministic TUN route exclusions.'
           )
         )
         break
       case 'PROCESS-NAME':
-        {
-          const preset = findProcessTunBypassPreset(rule.value ?? '')
-          if (preset) {
-            supportedRuleCount += 1
-            routeExcludeAddresses.push(...preset.routeExcludeAddresses)
-            warnings.push(
-              createRuleWarning(
-                'process_name_preset_applied',
-                rule,
-                `PROCESS-NAME DIRECT uses the built-in ${preset.id} TUN bypass preset. This excludes known service IP ranges, not the process itself.`
-              )
-            )
-            break
-          }
-
-          unsupportedRules.push(
-            createUnsupportedRule(
-              'process_name_unsupported',
-              rule,
-              'PROCESS-NAME DIRECT selects Mihomo DIRECT but cannot exclude the process from TUN routing without a known address preset.'
-            )
-          )
-        }
-        break
+      case 'PROCESS-NAME-WILDCARD':
       case 'PROCESS-NAME-REGEX':
         unsupportedRules.push(
           createUnsupportedRule(
             'process_name_unsupported',
             rule,
-            'PROCESS-NAME-REGEX DIRECT selects Mihomo DIRECT but cannot be translated into deterministic TUN route exclusions.'
+            `${rule.type} DIRECT selects Mihomo DIRECT but cannot exclude a desktop process from TUN at the route layer.`
+          )
+        )
+        break
+      case 'PROCESS-PATH':
+      case 'PROCESS-PATH-WILDCARD':
+      case 'PROCESS-PATH-REGEX':
+        unsupportedRules.push(
+          createUnsupportedRule(
+            'process_path_unsupported',
+            rule,
+            `${rule.type} DIRECT selects Mihomo DIRECT but cannot be translated into route-exclude-address.`
           )
         )
         break
@@ -292,7 +273,7 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
           createUnsupportedRule(
             'rule_type_unsupported',
             rule,
-            `${rule.type} DIRECT rules are not supported by the TUN bypass compatibility layer.`
+            `${rule.type} DIRECT rules are not supported by the DIRECT exclude layer.`
           )
         )
     }
@@ -312,12 +293,17 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
 
   return {
     enabled: true,
+    mode,
     tunEnabled: true,
     status,
+    directExcludeOverallStatus: mapStatusToOverallStatus(status),
     active: hasResolved,
     directRuleCount: directRules.length,
+    excludableRuleCount: supportedRuleCount,
     supportedRuleCount,
     unsupportedRuleCount: unsupportedRules.length,
+    partialRuleCount,
+    failedRuleCount,
     resolvedAddressCount: normalizedRouteExcludeAddresses.length,
     routeExcludeAddresses: normalizedRouteExcludeAddresses,
     warnings,
@@ -401,25 +387,8 @@ function normalizeTarget(target: string): string {
   return target.trim().toUpperCase()
 }
 
-function findProcessTunBypassPreset(value: string): DirectProcessTunBypassPreset | undefined {
-  const normalized = normalizeProcessName(value)
-  if (!normalized) return undefined
-  return DIRECT_PROCESS_TUN_BYPASS_PRESETS.find((preset) =>
-    preset.processNames.some((processName) => normalizeProcessName(processName) === normalized)
-  )
-}
-
-function normalizeProcessName(value: string): string {
-  return value.trim().toLowerCase()
-}
-
 function normalizeDomainValue(value: string): string {
-  return value
-    .trim()
-    .replace(/^\+\./, '')
-    .replace(/^\*\./, '')
-    .replace(/^\./, '')
-    .toLowerCase()
+  return value.trim().replace(/^\+\./, '').replace(/^\*\./, '').replace(/^\./, '').toLowerCase()
 }
 
 function normalizeCidr(value: string): string | undefined {
@@ -461,6 +430,7 @@ function isIpv6Address(value: string): boolean {
 
 function createResolution(input: {
   enabled: boolean
+  mode: DirectExcludeMode
   tunEnabled: boolean
   status: DirectTunBypassStatus
   warnings?: DirectTunBypassWarning[]
@@ -468,17 +438,36 @@ function createResolution(input: {
 }): DirectTunBypassResolution {
   return {
     enabled: input.enabled,
+    mode: input.mode,
     tunEnabled: input.tunEnabled,
     status: input.status,
+    directExcludeOverallStatus: mapStatusToOverallStatus(input.status),
     active: false,
     directRuleCount: 0,
+    excludableRuleCount: 0,
     supportedRuleCount: 0,
     unsupportedRuleCount: 0,
+    partialRuleCount: 0,
+    failedRuleCount: 0,
     resolvedAddressCount: 0,
     routeExcludeAddresses: [],
     warnings: input.warnings ?? [],
     unsupportedRules: [],
     resolvedAt: input.now()
+  }
+}
+
+function mapStatusToOverallStatus(status: DirectTunBypassStatus): DirectExcludeOverallStatus {
+  switch (status) {
+    case 'resolved':
+      return 'active'
+    case 'partial':
+      return 'partial'
+    case 'failed':
+      return 'blocked'
+    case 'disabled':
+    case 'not_required':
+      return 'inactive'
   }
 }
 

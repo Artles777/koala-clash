@@ -275,6 +275,13 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
 }
 
 export async function stopCore(force = false): Promise<void> {
+  const { stopNativeProcessBypass } = await import('../runtime/native-process-bypass')
+  await stopNativeProcessBypass().catch(async (error) => {
+    await writeFile(logPath(), `[Manager]: native process bypass cleanup failed, ${error}\n`, {
+      flag: 'a'
+    })
+  })
+
   try {
     if (!force) {
       await recoverDNS()
@@ -427,6 +434,12 @@ export async function quitWithoutCore(): Promise<void> {
   await keepCoreAlive()
   const { stopAllAmneziaHelpers } = await import('../runtime/amnezia-helper-manager')
   await stopAllAmneziaHelpers('app_shutdown')
+  const { stopNativeProcessBypass } = await import('../runtime/native-process-bypass')
+  await stopNativeProcessBypass().catch(async (error) => {
+    await writeFile(logPath(), `[Manager]: native process bypass cleanup failed, ${error}\n`, {
+      flag: 'a'
+    })
+  })
   app.exit()
 }
 

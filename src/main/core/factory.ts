@@ -24,12 +24,20 @@ import { injectAmneziaHelperTunBypass } from '../../core/routing/amnezia-helper-
 import { getActiveAmneziaHelperTunBypass } from '../runtime/amnezia-helper-tun-bypass-state'
 import { ensureAmneziaTunRuntimeCompatibility } from '../../core/routing/amnezia-tun-runtime-compatibility'
 import { ensureMihomoRuleProviderPresets } from '../../core/routing/mihomo-rule-provider-presets'
-import {
-  injectDirectTunBypass,
-  TELEGRAM_DIRECT_TUN_BYPASS_PRESET
-} from '../../core/routing/direct-tun-bypass'
+import { injectDirectTunBypass, parseDirectRules } from '../../core/routing/direct-tun-bypass'
 import { resolveRuntimeDirectTunBypass } from '../runtime/direct-tun-bypass-resolver'
 import { updateDirectTunBypassState } from '../runtime/direct-tun-bypass-state'
+import {
+  injectLearnedProcessBypass,
+  resolveLearnedProcessBypass
+} from '../../core/routing/learned-process-bypass'
+import { evaluateBypassCapabilities } from '../../core/routing/bypass-capabilities'
+import {
+  getObservedProcessBypassEntries,
+  updateLearnedProcessBypassState
+} from '../runtime/learned-process-bypass-state'
+import { syncNativeProcessBypass } from '../runtime/native-process-bypass'
+import { updateBypassCapabilityState } from '../runtime/bypass-capability-state'
 
 let runtimeConfigStr: string,
   rawProfileStr: string,
@@ -180,11 +188,34 @@ export async function generateProfile(): Promise<void> {
     .config as MihomoConfig
   const directTunBypass = await resolveRuntimeDirectTunBypass({
     config: profile,
-    enabled: appConfig.directRulesBypassTun ?? true
+    enabled: appConfig.directExcludeEnabled ?? appConfig.directRulesBypassTun ?? true,
+    mode: appConfig.directExcludeMode ?? 'conservative'
   })
   updateDirectTunBypassState(directTunBypass)
   profile = injectDirectTunBypass(profile, directTunBypass).config as MihomoConfig
-  ensureDefaultSnifferSkipDstAddresses(profile)
+  const learnedProcessBypass = resolveLearnedProcessBypass({
+    config: profile,
+    enabled: appConfig.learnedProcessBypassEnabled ?? true,
+    entries: getObservedProcessBypassEntries(),
+    platform: process.platform
+  })
+  updateLearnedProcessBypassState(learnedProcessBypass)
+  profile = injectLearnedProcessBypass(profile, learnedProcessBypass).config as MihomoConfig
+  const nativeProcessBypass = await syncNativeProcessBypass({
+    enabled: appConfig.nativeProcessBypassEnabled ?? false,
+    tunEnabled: profile.tun?.enable === true,
+    processNames: getProcessNameDirectRules(profile),
+    platform: process.platform
+  })
+  updateBypassCapabilityState(
+    evaluateBypassCapabilities({
+      config: profile,
+      platform: process.platform,
+      nativeProcessBypass,
+      directTunBypass,
+      learnedProcessBypass
+    })
+  )
   profile = ensureMihomoRuleProviderPresets(profile) as MihomoConfig
 
   const tunEnabled = profile.tun?.enable ?? false
@@ -210,6 +241,17 @@ export async function generateProfile(): Promise<void> {
     diffWorkDir ? mihomoWorkConfigPath(current) : mihomoWorkConfigPath('work'),
     runtimeConfigStr
   )
+}
+
+function getProcessNameDirectRules(profile: MihomoConfig): string[] {
+  return [
+    ...new Set(
+      parseDirectRules(profile.rules)
+        .filter((rule) => rule.type === 'PROCESS-NAME' && Boolean(rule.value?.trim()))
+        .map((rule) => rule.value?.trim())
+        .filter((value): value is string => Boolean(value))
+    )
+  ].sort()
 }
 
 async function cleanProfile(
@@ -407,19 +449,6 @@ function cleanSnifferConfig(profile: MihomoConfig, controlSniff: boolean): void 
   if (!profile.sniffer?.enable) {
     delete (profile as Partial<MihomoConfig>).sniffer
   }
-}
-
-function ensureDefaultSnifferSkipDstAddresses(profile: MihomoConfig): void {
-  if (!profile.sniffer?.enable) return
-
-  const current = Array.isArray(profile.sniffer['skip-dst-address'])
-    ? profile.sniffer['skip-dst-address']
-    : []
-  const merged = [
-    ...new Set([...current, ...TELEGRAM_DIRECT_TUN_BYPASS_PRESET.routeExcludeAddresses])
-  ].sort()
-
-  profile.sniffer['skip-dst-address'] = merged
 }
 
 function cleanProxyConfigs(profile: MihomoConfig): void {

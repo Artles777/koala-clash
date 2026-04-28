@@ -23,6 +23,12 @@ import type {
   AmneziaHelperTunBypassResolutionStatus
 } from '../../core/routing/amnezia-helper-tun-bypass'
 import type { DirectTunBypassResolution } from '../../core/routing/direct-tun-bypass'
+import type { LearnedProcessBypassResolution } from '../../core/routing/learned-process-bypass'
+import type {
+  BypassCapabilityReport,
+  EffectiveBypassMode,
+  NativeProcessBypassStatus
+} from '../../core/routing/bypass-capabilities'
 import type {
   AmneziaHelperExecutableValidationIssue,
   AmneziaHelperExecutableValidationResult,
@@ -74,6 +80,14 @@ export type AmneziaHelperSupportStatusCode =
   | 'direct_tun_bypass_partial'
   | 'direct_tun_bypass_blocked'
   | 'direct_process_name_bypass_unsupported'
+  | 'learned_process_bypass_active'
+  | 'learned_process_bypass_observing'
+  | 'learned_process_bypass_stale'
+  | 'learned_process_bypass_unsupported'
+  | 'native_process_bypass_available'
+  | 'native_process_bypass_active'
+  | 'native_process_bypass_unsupported'
+  | 'native_process_bypass_blocked'
   | 'udp_supported'
   | 'udp_tcp_only'
 
@@ -244,12 +258,49 @@ export interface AmneziaHelperTunSupportSnapshot {
   helperRulesIpCidrOnly: boolean
   helperRulesDomainCount: number
   helperRulesIpCidrCount: number
+  directExcludeEnabled: boolean
+  directExcludeActive: boolean
+  directExcludeMode: DirectTunBypassResolution['mode']
+  directExcludeOverallStatus: DirectTunBypassResolution['directExcludeOverallStatus']
+  directExcludeRuleCount: number
+  directExcludeResolvedAddressCount: number
+  directExcludePartialCount: number
+  directExcludeFailureCount: number
+  directExcludeWarnings: string[]
   directTunBypassEnabled: boolean
   directTunBypassActive: boolean
   directTunBypassStatus: DirectTunBypassResolution['status']
   directTunBypassRuleCount: number
   directTunBypassResolvedAddressCount: number
   directTunBypassWarnings: string[]
+  learnedBypassEnabled: boolean
+  learnedBypassActive: boolean
+  learnedBypassEntryCount: number
+  learnedBypassProcessCount: number
+  learnedBypassExpiredCount: number
+  learnedBypassSupportedOnPlatform: boolean
+  learnedBypassWarnings: string[]
+  learnedBypassOverallStatus: LearnedProcessBypassResolution['status']
+  nativeProcessBypassEnabled: boolean
+  nativeProcessBypassSupportedOnPlatform: boolean
+  nativeProcessBypassActive: boolean
+  nativeProcessBypassRequiresPrivileges: boolean
+  nativeProcessBypassRequiresService: boolean
+  nativeProcessBypassStatus: NativeProcessBypassStatus
+  nativeProcessBypassMechanism?: BypassCapabilityReport['nativeProcessBypass']['mechanism']
+  nativeProcessBypassDiagnostics: string[]
+  nativeProcessBypassPrerequisiteStatus?: BypassCapabilityReport['nativeProcessBypass']['prerequisiteStatus']
+  nativeProcessBypassBoundPidCount: number
+  processDirectEffectiveBypassMode: EffectiveBypassMode
+  bypassCapabilityWarnings: string[]
+  bypassCapabilitySummary: BypassCapabilityReport['summary']
+  unsupportedDirectExcludeRules: Array<{
+    rule: string
+    ruleType: string
+    value?: string
+    reasonCode: string
+    message: string
+  }>
   unsupportedDirectBypassRules: Array<{
     rule: string
     ruleType: string
@@ -341,11 +392,30 @@ export interface AmneziaHelperSupportSummaryExport {
     | 'helperBypassActive'
     | 'helperBypassIpsCount'
     | 'helperBypassResolutionStatus'
+    | 'directExcludeEnabled'
+    | 'directExcludeActive'
+    | 'directExcludeMode'
+    | 'directExcludeOverallStatus'
+    | 'directExcludeRuleCount'
+    | 'directExcludeResolvedAddressCount'
+    | 'directExcludePartialCount'
+    | 'directExcludeFailureCount'
     | 'directTunBypassEnabled'
     | 'directTunBypassActive'
     | 'directTunBypassStatus'
     | 'directTunBypassRuleCount'
     | 'directTunBypassResolvedAddressCount'
+    | 'learnedBypassEnabled'
+    | 'learnedBypassActive'
+    | 'learnedBypassOverallStatus'
+    | 'learnedBypassEntryCount'
+    | 'learnedBypassProcessCount'
+    | 'learnedBypassExpiredCount'
+    | 'nativeProcessBypassEnabled'
+    | 'nativeProcessBypassSupportedOnPlatform'
+    | 'nativeProcessBypassActive'
+    | 'nativeProcessBypassStatus'
+    | 'processDirectEffectiveBypassMode'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'
   >
@@ -387,6 +457,8 @@ interface CreateDiagnosticsBundleInput {
   lastConnectivityResult?: AmneziaHelperConnectivityResult
   tun?: AmneziaHelperTunSupportSnapshot
   directTunBypass?: DirectTunBypassResolution
+  learnedProcessBypass?: LearnedProcessBypassResolution
+  bypassCapabilities?: BypassCapabilityReport
   udp?: AmneziaHelperUdpSupportSnapshot
   stability?: AmneziaHelperStabilitySupportSnapshot
   stabilityReport?: AmneziaHelperStabilityReport
@@ -456,7 +528,16 @@ export function createAmneziaHelperDiagnosticsBundle(
   const routingTarget = session?.routingTarget ?? input.routingTarget
   const lastConnectivityResult = session?.connectivityResult ?? input.lastConnectivityResult
   const tun =
-    input.tun ?? createTunSupportSnapshot(false, input.session?.tunBypass, undefined, undefined, input.directTunBypass)
+    input.tun ??
+    createTunSupportSnapshot(
+      false,
+      input.session?.tunBypass,
+      undefined,
+      undefined,
+      input.directTunBypass,
+      input.learnedProcessBypass,
+      input.bypassCapabilities
+    )
   const udp =
     input.udp ??
     createUdpSupportSnapshot(
@@ -632,7 +713,9 @@ export function createTunSupportSnapshot(
   resolution?: AmneziaHelperTunBypassResolution,
   activeResolution?: AmneziaHelperTunBypassResolution,
   ruleReliability?: AmneziaHelperTunRuleReliabilityResult,
-  directTunBypass?: DirectTunBypassResolution
+  directTunBypass?: DirectTunBypassResolution,
+  learnedProcessBypass?: LearnedProcessBypassResolution,
+  bypassCapabilities?: BypassCapabilityReport
 ): AmneziaHelperTunSupportSnapshot {
   const effectiveResolution = resolution ?? activeResolution
   const active = enabled && activeResolution?.status === 'resolved'
@@ -662,12 +745,57 @@ export function createTunSupportSnapshot(
     helperRulesIpCidrOnly: reliability.ruleTypes.hasIpCidrOnly,
     helperRulesDomainCount: reliability.ruleTypes.domainRuleCount,
     helperRulesIpCidrCount: reliability.ruleTypes.ipCidrRuleCount,
+    directExcludeEnabled: directTunBypass?.enabled ?? false,
+    directExcludeActive: directTunBypass?.active ?? false,
+    directExcludeMode: directTunBypass?.mode ?? 'conservative',
+    directExcludeOverallStatus: directTunBypass?.directExcludeOverallStatus ?? 'inactive',
+    directExcludeRuleCount: directTunBypass?.directRuleCount ?? 0,
+    directExcludeResolvedAddressCount: directTunBypass?.resolvedAddressCount ?? 0,
+    directExcludePartialCount: directTunBypass?.partialRuleCount ?? 0,
+    directExcludeFailureCount: directTunBypass?.failedRuleCount ?? 0,
+    directExcludeWarnings: directTunBypass?.warnings.map((warning) => warning.message) ?? [],
     directTunBypassEnabled: directTunBypass?.enabled ?? false,
     directTunBypassActive: directTunBypass?.active ?? false,
     directTunBypassStatus: directTunBypass?.status ?? 'disabled',
     directTunBypassRuleCount: directTunBypass?.directRuleCount ?? 0,
     directTunBypassResolvedAddressCount: directTunBypass?.resolvedAddressCount ?? 0,
     directTunBypassWarnings: directTunBypass?.warnings.map((warning) => warning.message) ?? [],
+    learnedBypassEnabled: learnedProcessBypass?.enabled ?? false,
+    learnedBypassActive: learnedProcessBypass?.active ?? false,
+    learnedBypassEntryCount: learnedProcessBypass?.entryCount ?? 0,
+    learnedBypassProcessCount: learnedProcessBypass?.processCount ?? 0,
+    learnedBypassExpiredCount: learnedProcessBypass?.expiredCount ?? 0,
+    learnedBypassSupportedOnPlatform: learnedProcessBypass?.supportedOnPlatform ?? false,
+    learnedBypassWarnings: learnedProcessBypass?.warnings.map((warning) => warning.message) ?? [],
+    learnedBypassOverallStatus: learnedProcessBypass?.status ?? 'inactive',
+    nativeProcessBypassEnabled: bypassCapabilities?.nativeProcessBypass.enabled ?? false,
+    nativeProcessBypassSupportedOnPlatform:
+      bypassCapabilities?.nativeProcessBypass.supportedOnPlatform ?? false,
+    nativeProcessBypassActive: bypassCapabilities?.nativeProcessBypass.active ?? false,
+    nativeProcessBypassRequiresPrivileges:
+      bypassCapabilities?.nativeProcessBypass.requiresPrivileges ?? false,
+    nativeProcessBypassRequiresService:
+      bypassCapabilities?.nativeProcessBypass.requiresService ?? false,
+    nativeProcessBypassStatus: bypassCapabilities?.nativeProcessBypass.status ?? 'disabled',
+    nativeProcessBypassMechanism: bypassCapabilities?.nativeProcessBypass.mechanism,
+    nativeProcessBypassDiagnostics:
+      bypassCapabilities?.nativeProcessBypass.diagnostics.map((diagnostic) => diagnostic) ?? [],
+    nativeProcessBypassPrerequisiteStatus:
+      bypassCapabilities?.nativeProcessBypass.prerequisiteStatus,
+    nativeProcessBypassBoundPidCount:
+      bypassCapabilities?.nativeProcessBypass.boundPids?.length ?? 0,
+    processDirectEffectiveBypassMode: getProcessDirectEffectiveBypassMode(bypassCapabilities),
+    bypassCapabilityWarnings: bypassCapabilities?.warnings.map((warning) => warning) ?? [],
+    bypassCapabilitySummary: bypassCapabilities?.summary ?? {
+      trueBypassRuleCount: 0,
+      partialBypassRuleCount: 0,
+      learnedBypassRuleCount: 0,
+      directOnlyRuleCount: 0,
+      unsupportedRuleCount: 0,
+      processDirectRuleCount: 0
+    },
+    unsupportedDirectExcludeRules:
+      directTunBypass?.unsupportedRules.map((rule) => ({ ...rule })) ?? [],
     unsupportedDirectBypassRules:
       directTunBypass?.unsupportedRules.map((rule) => ({ ...rule })) ?? []
   }
@@ -680,6 +808,23 @@ export function createUdpSupportSnapshot(
     ...capability,
     runtimeAdvertisesUdp: shouldAdvertiseAmneziaHelperUdp(capability)
   }
+}
+
+function getProcessDirectEffectiveBypassMode(report?: BypassCapabilityReport): EffectiveBypassMode {
+  const processRules = report?.rules.filter((rule) => rule.ruleType === 'PROCESS-NAME') ?? []
+  if (processRules.some((rule) => rule.effectiveBypassMode === 'true_bypass')) {
+    return 'true_bypass'
+  }
+  if (processRules.some((rule) => rule.effectiveBypassMode === 'learned_bypass')) {
+    return 'learned_bypass'
+  }
+  if (processRules.some((rule) => rule.effectiveBypassMode === 'partial_bypass')) {
+    return 'partial_bypass'
+  }
+  if (processRules.some((rule) => rule.effectiveBypassMode === 'unsupported')) {
+    return 'unsupported'
+  }
+  return processRules.length > 0 ? 'direct_only' : 'unsupported'
 }
 
 export function createStabilitySupportSnapshot(
@@ -1011,7 +1156,28 @@ function collectRecommendedActions(
     add(
       'avoid_process_direct_bypass',
       'warning',
-      'Unknown PROCESS-NAME DIRECT rules cannot exclude an app from TUN; use VPN/PROXY, explicit IP-CIDR exclusions, or a supported built-in preset.'
+      'PROCESS-NAME DIRECT cannot exclude an app from TUN at the route layer; use VPN/PROXY or explicit IP-CIDR/DOMAIN DIRECT excludes.'
+    )
+  }
+  if (hasAny(codes, ['learned_process_bypass_observing', 'learned_process_bypass_stale'])) {
+    add(
+      'wait_for_learned_process_bypass',
+      'warning',
+      'Generate matching PROCESS-NAME DIRECT traffic once, or prefer explicit IP-CIDR/DOMAIN DIRECT excludes for deterministic TUN bypass.'
+    )
+  }
+  if (codes.has('learned_process_bypass_unsupported')) {
+    add(
+      'use_explicit_direct_excludes',
+      'warning',
+      'This platform cannot use learned process bypass; use explicit IP-CIDR or DOMAIN DIRECT excludes.'
+    )
+  }
+  if (hasAny(codes, ['native_process_bypass_available', 'native_process_bypass_blocked'])) {
+    add(
+      'inspect_native_process_bypass',
+      'warning',
+      'Native process bypass is Linux-first and still requires privileged cgroup/fwmark integration before it can replace learned bypass.'
     )
   }
   if (codes.has('stability_not_validated')) {
@@ -1041,6 +1207,8 @@ function sourceForStatusCode(
 ): AmneziaHelperReadinessIssueSource {
   if (code.startsWith('tun_')) return code.includes('domain_rules') ? 'dns' : 'tun'
   if (code.startsWith('direct_tun_') || code.startsWith('direct_process_')) return 'tun'
+  if (code.startsWith('learned_process_')) return 'tun'
+  if (code.startsWith('native_process_')) return 'tun'
   if (code.startsWith('udp_')) return 'udp'
   if (code.includes('routing') || code.includes('rules')) return 'helper'
   if (code.includes('helper') || code.includes('backend') || code.includes('startup')) {
@@ -1121,11 +1289,30 @@ function createSupportSummaryExport(input: {
       helperBypassActive: input.tun.helperBypassActive,
       helperBypassIpsCount: input.tun.helperBypassIpsCount,
       helperBypassResolutionStatus: input.tun.helperBypassResolutionStatus,
+      directExcludeEnabled: input.tun.directExcludeEnabled,
+      directExcludeActive: input.tun.directExcludeActive,
+      directExcludeMode: input.tun.directExcludeMode,
+      directExcludeOverallStatus: input.tun.directExcludeOverallStatus,
+      directExcludeRuleCount: input.tun.directExcludeRuleCount,
+      directExcludeResolvedAddressCount: input.tun.directExcludeResolvedAddressCount,
+      directExcludePartialCount: input.tun.directExcludePartialCount,
+      directExcludeFailureCount: input.tun.directExcludeFailureCount,
       directTunBypassEnabled: input.tun.directTunBypassEnabled,
       directTunBypassActive: input.tun.directTunBypassActive,
       directTunBypassStatus: input.tun.directTunBypassStatus,
       directTunBypassRuleCount: input.tun.directTunBypassRuleCount,
       directTunBypassResolvedAddressCount: input.tun.directTunBypassResolvedAddressCount,
+      learnedBypassEnabled: input.tun.learnedBypassEnabled,
+      learnedBypassActive: input.tun.learnedBypassActive,
+      learnedBypassOverallStatus: input.tun.learnedBypassOverallStatus,
+      learnedBypassEntryCount: input.tun.learnedBypassEntryCount,
+      learnedBypassProcessCount: input.tun.learnedBypassProcessCount,
+      learnedBypassExpiredCount: input.tun.learnedBypassExpiredCount,
+      nativeProcessBypassEnabled: input.tun.nativeProcessBypassEnabled,
+      nativeProcessBypassSupportedOnPlatform: input.tun.nativeProcessBypassSupportedOnPlatform,
+      nativeProcessBypassActive: input.tun.nativeProcessBypassActive,
+      nativeProcessBypassStatus: input.tun.nativeProcessBypassStatus,
+      processDirectEffectiveBypassMode: input.tun.processDirectEffectiveBypassMode,
       helperRuleReliability: input.tun.helperRuleReliability,
       helperRuleReliabilityReason: input.tun.helperRuleReliabilityReason
     },
@@ -1342,13 +1529,48 @@ function collectSupportStatuses(input: CreateSupportSummaryInput): AmneziaHelper
     }
 
     if (
-      tun.unsupportedDirectBypassRules.some((rule) => rule.reasonCode === 'process_name_unsupported')
+      tun.unsupportedDirectBypassRules.some(
+        (rule) => rule.reasonCode === 'process_name_unsupported'
+      )
     ) {
       statuses.push(
         createStatus('direct_process_name_bypass_unsupported', {
           unsupportedRules: tun.unsupportedDirectBypassRules.length
         })
       )
+    }
+  }
+
+  if (tun.enabled && tun.learnedBypassEnabled) {
+    if (tun.learnedBypassOverallStatus === 'active') {
+      statuses.push(
+        createStatus('learned_process_bypass_active', {
+          entries: tun.learnedBypassEntryCount,
+          processes: tun.learnedBypassProcessCount
+        })
+      )
+    } else if (tun.learnedBypassOverallStatus === 'observing') {
+      statuses.push(createStatus('learned_process_bypass_observing'))
+    } else if (tun.learnedBypassOverallStatus === 'stale') {
+      statuses.push(
+        createStatus('learned_process_bypass_stale', {
+          expiredEntries: tun.learnedBypassExpiredCount
+        })
+      )
+    } else if (tun.learnedBypassOverallStatus === 'unsupported') {
+      statuses.push(createStatus('learned_process_bypass_unsupported'))
+    }
+  }
+
+  if (tun.enabled && tun.bypassCapabilitySummary.processDirectRuleCount > 0) {
+    if (tun.nativeProcessBypassActive) {
+      statuses.push(createStatus('native_process_bypass_active'))
+    } else if (tun.nativeProcessBypassEnabled && tun.nativeProcessBypassStatus === 'available') {
+      statuses.push(createStatus('native_process_bypass_available'))
+    } else if (tun.nativeProcessBypassEnabled && tun.nativeProcessBypassStatus === 'blocked') {
+      statuses.push(createStatus('native_process_bypass_blocked'))
+    } else if (!tun.nativeProcessBypassSupportedOnPlatform) {
+      statuses.push(createStatus('native_process_bypass_unsupported'))
     }
   }
 
@@ -1640,26 +1862,71 @@ const statusDefinitions: Record<
   },
   direct_tun_bypass_active: {
     severity: 'info',
-    title: 'DIRECT TUN bypass active',
+    title: 'DIRECT exclude active',
     message: 'Supported DIRECT rules are injected as transient TUN route exclusions.'
   },
   direct_tun_bypass_partial: {
     severity: 'warning',
-    title: 'DIRECT TUN bypass partial',
+    title: 'DIRECT exclude partial',
     message:
       'Some DIRECT rules were translated into TUN route exclusions, but unresolved or unsupported rules remain.'
   },
   direct_tun_bypass_blocked: {
     severity: 'warning',
-    title: 'DIRECT TUN bypass unavailable',
-    message:
-      'DIRECT rules exist, but none could be safely translated into TUN route exclusions.'
+    title: 'DIRECT exclude unavailable',
+    message: 'DIRECT rules exist, but none could be safely translated into TUN route exclusions.'
   },
   direct_process_name_bypass_unsupported: {
     severity: 'warning',
-    title: 'PROCESS-NAME cannot bypass TUN',
+    title: 'PROCESS-NAME cannot create DIRECT exclude',
     message:
-      'Unknown PROCESS-NAME DIRECT keeps Mihomo DIRECT behavior, but it cannot exclude the process from TUN routing without a known address preset.'
+      'PROCESS-NAME DIRECT keeps Mihomo DIRECT behavior, but it cannot exclude the process from TUN routing at the route layer.'
+  },
+  learned_process_bypass_active: {
+    severity: 'info',
+    title: 'Learned process bypass active',
+    message:
+      'Observed PROCESS-NAME DIRECT destinations are being injected as temporary TUN route exclusions.'
+  },
+  learned_process_bypass_observing: {
+    severity: 'warning',
+    title: 'Learned process bypass observing',
+    message:
+      'PROCESS-NAME DIRECT rules exist, but no matching destination IPs have been observed yet.'
+  },
+  learned_process_bypass_stale: {
+    severity: 'warning',
+    title: 'Learned process bypass stale',
+    message:
+      'Previously observed PROCESS-NAME DIRECT destinations expired and are no longer injected.'
+  },
+  learned_process_bypass_unsupported: {
+    severity: 'warning',
+    title: 'Learned process bypass unsupported',
+    message: 'This desktop platform does not support learned process-to-IP bypass observation.'
+  },
+  native_process_bypass_available: {
+    severity: 'warning',
+    title: 'Native process bypass scaffold available',
+    message:
+      'Linux native process bypass capability is detected, but privileged activation is not implemented yet.'
+  },
+  native_process_bypass_active: {
+    severity: 'info',
+    title: 'Native process bypass active',
+    message: 'PROCESS-NAME DIRECT rules are covered by native OS-level bypass.'
+  },
+  native_process_bypass_unsupported: {
+    severity: 'warning',
+    title: 'Native process bypass unsupported',
+    message:
+      'Native process bypass is currently Linux-first; this platform falls back to learned bypass.'
+  },
+  native_process_bypass_blocked: {
+    severity: 'warning',
+    title: 'Native process bypass blocked',
+    message:
+      'Native process bypass was requested, but privileged Linux cgroup/fwmark setup is not active.'
   },
   udp_supported: {
     severity: 'info',

@@ -36,6 +36,8 @@ import {
   getLastAmneziaHelperTunBypass
 } from '../runtime/amnezia-helper-tun-bypass-state'
 import { getLastDirectTunBypass } from '../runtime/direct-tun-bypass-state'
+import { getLastLearnedProcessBypass } from '../runtime/learned-process-bypass-state'
+import { getLastBypassCapabilityReport } from '../runtime/bypass-capability-state'
 import { dataDir, resourcesFilesDir } from '../utils/dirs'
 import { getAmneziaHelperRulePacks } from './amneziaHelperRules'
 
@@ -62,6 +64,8 @@ export async function getAmneziaHelperSupportSnapshot(
   const activeTunBypass = getActiveAmneziaHelperTunBypass()
   const tunBypass = session.tunBypass ?? getLastAmneziaHelperTunBypass() ?? activeTunBypass
   const directTunBypass = getLastDirectTunBypass()
+  const learnedProcessBypass = getLastLearnedProcessBypass()
+  const bypassCapabilities = getLastBypassCapabilityReport()
   const ruleReliability = evaluateAmneziaHelperTunRuleReliability({
     ...tunDnsState,
     rules: flattenAmneziaHelperRulePacks(rulePacks, { enabledPacksOnly: true })
@@ -71,7 +75,9 @@ export async function getAmneziaHelperSupportSnapshot(
     tunBypass,
     activeTunBypass,
     ruleReliability,
-    directTunBypass
+    directTunBypass,
+    learnedProcessBypass,
+    bypassCapabilities
   )
 
   return createAmneziaHelperDiagnosticsBundle({
@@ -89,7 +95,9 @@ export async function getAmneziaHelperSupportSnapshot(
     routingTarget,
     lastConnectivityResult,
     tun,
-    directTunBypass
+    directTunBypass,
+    learnedProcessBypass,
+    bypassCapabilities
   })
 }
 

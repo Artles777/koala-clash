@@ -19,6 +19,7 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     const injection = injectDirectTunBypass(config, resolution)
 
     assert.equal(resolution.status, 'not_required')
+    assert.equal(resolution.directExcludeOverallStatus, 'inactive')
     assert.equal(injection.injected, false)
     assert.equal(injection.reason, 'tun_disabled')
     assert.deepEqual(injection.config, config)
@@ -33,6 +34,7 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     const injection = injectDirectTunBypass(config, resolution)
 
     assert.equal(resolution.status, 'disabled')
+    assert.equal(resolution.directExcludeOverallStatus, 'inactive')
     assert.equal(injection.injected, false)
     assert.equal(injection.reason, 'feature_disabled')
     assert.deepEqual(injection.config.tun?.['route-exclude-address'], undefined)
@@ -47,10 +49,14 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     const injection = injectDirectTunBypass(config, resolution)
 
     assert.equal(resolution.status, 'resolved')
+    assert.equal(resolution.directExcludeOverallStatus, 'active')
     assert.equal(resolution.active, true)
+    assert.equal(resolution.excludableRuleCount, 1)
+    assert.equal(resolution.failedRuleCount, 0)
     assert.deepEqual(resolution.routeExcludeAddresses, ['149.154.160.0/20'])
     assert.equal(injection.injected, true)
     assert.deepEqual(injection.config.tun?.['route-exclude-address'], ['149.154.160.0/20'])
+    assert.deepEqual(config.tun?.['route-exclude-address'], undefined)
   })
 
   it('resolves DOMAIN and DOMAIN-SUFFIX DIRECT rules into route exclusions', async () => {
@@ -72,14 +78,16 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     const injection = injectDirectTunBypass(config, resolution)
 
     assert.equal(resolution.status, 'partial')
+    assert.equal(resolution.directExcludeOverallStatus, 'partial')
+    assert.equal(resolution.excludableRuleCount, 2)
+    assert.equal(resolution.partialRuleCount, 1)
+    assert.equal(resolution.failedRuleCount, 0)
     assert.deepEqual(resolution.routeExcludeAddresses, [
       '149.154.167.99/32',
       '2001:db8::10/128',
       '203.0.113.10/32'
     ])
-    assert.ok(
-      resolution.warnings.some((warning) => warning.code === 'domain_suffix_apex_only')
-    )
+    assert.ok(resolution.warnings.some((warning) => warning.code === 'domain_suffix_apex_only'))
     assert.equal(injection.injected, true)
   })
 
@@ -98,7 +106,9 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     const injection = injectDirectTunBypass(config, resolution)
 
     assert.equal(resolution.status, 'failed')
+    assert.equal(resolution.directExcludeOverallStatus, 'blocked')
     assert.equal(resolution.active, false)
+    assert.equal(resolution.failedRuleCount, 1)
     assert.deepEqual(resolution.routeExcludeAddresses, [])
     assert.equal(resolution.warnings[0].code, 'domain_resolution_failed')
     assert.equal(injection.injected, false)
@@ -131,7 +141,7 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     ])
   })
 
-  it('keeps PROCESS-NAME DIRECT as unsupported for real TUN bypass', async () => {
+  it('keeps PROCESS-NAME DIRECT as unsupported for true DIRECT exclude', async () => {
     const config = {
       tun: { enable: true },
       rules: ['PROCESS-NAME,UnknownApp,DIRECT']
@@ -140,13 +150,14 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     const injection = injectDirectTunBypass(config, resolution)
 
     assert.equal(resolution.status, 'failed')
+    assert.equal(resolution.directExcludeOverallStatus, 'blocked')
     assert.equal(resolution.unsupportedRuleCount, 1)
     assert.equal(resolution.unsupportedRules[0].reasonCode, 'process_name_unsupported')
     assert.equal(injection.injected, false)
     assert.equal(injection.reason, 'bypass_not_resolved')
   })
 
-  it('uses the built-in Telegram preset for PROCESS-NAME DIRECT under TUN', async () => {
+  it('does not pretend Telegram PROCESS-NAME DIRECT is a true TUN exclude', async () => {
     const config = {
       tun: { enable: true },
       rules: ['PROCESS-NAME,Telegram,DIRECT']
@@ -154,17 +165,26 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     const resolution = await resolveDirectTunBypass({ config, enabled: true })
     const injection = injectDirectTunBypass(config, resolution)
 
-    assert.equal(resolution.status, 'partial')
-    assert.equal(resolution.active, true)
-    assert.equal(resolution.supportedRuleCount, 1)
-    assert.equal(resolution.unsupportedRuleCount, 0)
-    assert.ok(resolution.routeExcludeAddresses.includes('149.154.160.0/20'))
-    assert.ok(resolution.routeExcludeAddresses.includes('91.108.4.0/22'))
-    assert.ok(resolution.routeExcludeAddresses.includes('2001:67c:4e8::/48'))
-    assert.ok(
-      resolution.warnings.some((warning) => warning.code === 'process_name_preset_applied')
-    )
-    assert.equal(injection.injected, true)
-    assert.ok(injection.config.tun?.['route-exclude-address']?.includes('149.154.160.0/20'))
+    assert.equal(resolution.status, 'failed')
+    assert.equal(resolution.directExcludeOverallStatus, 'blocked')
+    assert.equal(resolution.active, false)
+    assert.equal(resolution.supportedRuleCount, 0)
+    assert.equal(resolution.unsupportedRuleCount, 1)
+    assert.deepEqual(resolution.routeExcludeAddresses, [])
+    assert.equal(resolution.unsupportedRules[0].reasonCode, 'process_name_unsupported')
+    assert.equal(injection.injected, false)
+    assert.equal(injection.reason, 'bypass_not_resolved')
+  })
+
+  it('keeps DOMAIN-KEYWORD DIRECT unsupported for deterministic route excludes', async () => {
+    const config = {
+      tun: { enable: true },
+      rules: ['DOMAIN-KEYWORD,telegram,DIRECT']
+    }
+    const resolution = await resolveDirectTunBypass({ config, enabled: true })
+
+    assert.equal(resolution.status, 'failed')
+    assert.equal(resolution.unsupportedRuleCount, 1)
+    assert.equal(resolution.unsupportedRules[0].reasonCode, 'domain_keyword_unsupported')
   })
 })

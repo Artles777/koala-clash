@@ -29,8 +29,12 @@ const Tun: React.FC = () => {
   const {
     autoSetDNSMode = 'exec',
     controlTun = false,
-    directRulesBypassTun = true
+    directExcludeEnabled,
+    directRulesBypassTun = true,
+    learnedProcessBypassEnabled = true,
+    nativeProcessBypassEnabled = false
   } = appConfig || {}
+  const directExcludeSwitchEnabled = directExcludeEnabled ?? directRulesBypassTun
   const { tun } = controledMihomoConfig || {}
   const [loading, setLoading] = useState(false)
   const {
@@ -221,10 +225,10 @@ const Tun: React.FC = () => {
           </SettingItem>
           <SettingItem title={t('pages.tun.directRulesBypassTun')} divider>
             <Switch
-              checked={directRulesBypassTun}
+              checked={directExcludeSwitchEnabled}
               onCheckedChange={async (value) => {
                 try {
-                  await patchAppConfig({ directRulesBypassTun: value })
+                  await patchAppConfig({ directExcludeEnabled: value })
                   await mihomoHotReloadConfig()
                 } catch (e) {
                   toast.error(`${e}`)
@@ -232,6 +236,34 @@ const Tun: React.FC = () => {
               }}
             />
           </SettingItem>
+          <SettingItem title={t('pages.tun.learnedProcessBypass')} divider>
+            <Switch
+              checked={learnedProcessBypassEnabled}
+              onCheckedChange={async (value) => {
+                try {
+                  await patchAppConfig({ learnedProcessBypassEnabled: value })
+                  await mihomoHotReloadConfig()
+                } catch (e) {
+                  toast.error(`${e}`)
+                }
+              }}
+            />
+          </SettingItem>
+          {platform === 'linux' && (
+            <SettingItem title={t('pages.tun.nativeProcessBypass')} divider>
+              <Switch
+                checked={nativeProcessBypassEnabled}
+                onCheckedChange={async (value) => {
+                  try {
+                    await patchAppConfig({ nativeProcessBypassEnabled: value })
+                    await mihomoHotReloadConfig()
+                  } catch (e) {
+                    toast.error(`${e}`)
+                  }
+                }}
+              />
+            </SettingItem>
+          )}
           <SettingItem title={t('pages.tun.icmpForwarding')} divider>
             <Switch
               checked={!values.disableIcmpForwarding}

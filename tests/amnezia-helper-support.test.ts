@@ -313,44 +313,43 @@ describe('Amnezia helper support diagnostics', () => {
         validationStage: 'upstream_request'
       }),
       rulePacks: [],
-      tun: createTunSupportSnapshot(
-        true,
-        undefined,
-        undefined,
-        undefined,
-        {
-          enabled: true,
-          tunEnabled: true,
-          status: 'failed',
-          active: false,
-          directRuleCount: 1,
-          supportedRuleCount: 0,
-          unsupportedRuleCount: 1,
-          resolvedAddressCount: 0,
-          routeExcludeAddresses: [],
-          warnings: [
-            {
-              code: 'process_name_unsupported',
-              rule: 'PROCESS-NAME,Telegram,DIRECT',
-              ruleType: 'PROCESS-NAME',
-              value: 'Telegram',
-              message:
-                'PROCESS-NAME DIRECT selects Mihomo DIRECT but cannot exclude the process from TUN routing.'
-            }
-          ],
-          unsupportedRules: [
-            {
-              rule: 'PROCESS-NAME,Telegram,DIRECT',
-              ruleType: 'PROCESS-NAME',
-              value: 'Telegram',
-              reasonCode: 'process_name_unsupported',
-              message:
-                'PROCESS-NAME DIRECT selects Mihomo DIRECT but cannot exclude the process from TUN routing.'
-            }
-          ],
-          resolvedAt: 1710000000000
-        }
-      )
+      tun: createTunSupportSnapshot(true, undefined, undefined, undefined, {
+        enabled: true,
+        mode: 'conservative',
+        tunEnabled: true,
+        status: 'failed',
+        directExcludeOverallStatus: 'blocked',
+        active: false,
+        directRuleCount: 1,
+        excludableRuleCount: 0,
+        supportedRuleCount: 0,
+        unsupportedRuleCount: 1,
+        partialRuleCount: 0,
+        failedRuleCount: 0,
+        resolvedAddressCount: 0,
+        routeExcludeAddresses: [],
+        warnings: [
+          {
+            code: 'process_name_unsupported',
+            rule: 'PROCESS-NAME,Telegram,DIRECT',
+            ruleType: 'PROCESS-NAME',
+            value: 'Telegram',
+            message:
+              'PROCESS-NAME DIRECT selects Mihomo DIRECT but cannot exclude a desktop process from TUN at the route layer.'
+          }
+        ],
+        unsupportedRules: [
+          {
+            rule: 'PROCESS-NAME,Telegram,DIRECT',
+            ruleType: 'PROCESS-NAME',
+            value: 'Telegram',
+            reasonCode: 'process_name_unsupported',
+            message:
+              'PROCESS-NAME DIRECT selects Mihomo DIRECT but cannot exclude a desktop process from TUN at the route layer.'
+          }
+        ],
+        resolvedAt: 1710000000000
+      })
     })
 
     assert.equal(bundle.tun.directTunBypassEnabled, true)
@@ -365,6 +364,120 @@ describe('Amnezia helper support diagnostics', () => {
       bundle.readinessSummary.recommendedActions.some(
         (action) => action.code === 'avoid_process_direct_bypass'
       )
+    )
+  })
+
+  it('surfaces learned process bypass diagnostics in support summaries', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      rulePacks: [],
+      tun: createTunSupportSnapshot(true, undefined, undefined, undefined, undefined, {
+        enabled: true,
+        supportedOnPlatform: true,
+        platform: 'darwin',
+        status: 'active',
+        active: true,
+        ruleCount: 1,
+        processCount: 1,
+        entryCount: 1,
+        expiredCount: 0,
+        resolvedAddressCount: 1,
+        routeExcludeAddresses: ['149.154.167.50/32'],
+        entries: [
+          {
+            processName: 'Telegram',
+            observedIp: '149.154.167.50',
+            observedAt: 1710000000000,
+            ttlExpiresAt: 1710000600000,
+            sourceConfidence: 'runtime_connection',
+            platform: 'darwin',
+            active: true,
+            learnedFromRuntime: true
+          }
+        ],
+        warnings: [],
+        ruleModes: [
+          {
+            rule: 'PROCESS-NAME,Telegram,DIRECT',
+            processName: 'Telegram',
+            effectiveMode: 'learned_bypass',
+            learnedEntryCount: 1
+          }
+        ],
+        resolvedAt: 1710000000000
+      })
+    })
+
+    assert.equal(bundle.tun.learnedBypassEnabled, true)
+    assert.equal(bundle.tun.learnedBypassActive, true)
+    assert.equal(bundle.tun.learnedBypassEntryCount, 1)
+    assert.equal(bundle.summaryExport.tun.learnedBypassOverallStatus, 'active')
+    assert.ok(
+      bundle.support.statuses.some((status) => status.code === 'learned_process_bypass_active')
+    )
+  })
+
+  it('surfaces native process bypass capability without claiming it is active', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      rulePacks: [],
+      tun: createTunSupportSnapshot(true, undefined, undefined, undefined, undefined, undefined, {
+        platform: 'linux',
+        tunEnabled: true,
+        nativeProcessBypass: {
+          enabled: true,
+          platform: 'linux',
+          supportedOnPlatform: true,
+          active: false,
+          status: 'available',
+          mechanism: 'linux-cgroup-fwmark',
+          requiresPrivileges: true,
+          requiresService: true,
+          diagnosticsReason: 'linux_scaffold_available',
+          diagnostics: ['Linux scaffold available.'],
+          activeProcesses: []
+        },
+        rules: [
+          {
+            rule: 'PROCESS-NAME,Telegram,DIRECT',
+            ruleType: 'PROCESS-NAME',
+            value: 'Telegram',
+            target: 'DIRECT',
+            effectiveBypassMode: 'direct_only',
+            platformSupport: 'degraded',
+            requiresPrivileges: true,
+            requiresNativeBypass: true,
+            diagnosticsReason: 'native_process_bypass_not_active',
+            diagnosticsMessage: 'Native process bypass is not active.'
+          }
+        ],
+        summary: {
+          trueBypassRuleCount: 0,
+          partialBypassRuleCount: 0,
+          learnedBypassRuleCount: 0,
+          directOnlyRuleCount: 1,
+          unsupportedRuleCount: 0,
+          processDirectRuleCount: 1
+        },
+        warnings: ['Native process bypass is enabled but not active yet.'],
+        evaluatedAt: 1710000000000
+      })
+    })
+
+    assert.equal(bundle.tun.nativeProcessBypassSupportedOnPlatform, true)
+    assert.equal(bundle.tun.nativeProcessBypassActive, false)
+    assert.equal(bundle.tun.nativeProcessBypassStatus, 'available')
+    assert.equal(bundle.tun.processDirectEffectiveBypassMode, 'direct_only')
+    assert.ok(
+      bundle.support.statuses.some((status) => status.code === 'native_process_bypass_available')
     )
   })
 

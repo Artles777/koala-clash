@@ -3,6 +3,7 @@ import {
   DirectTunBypassConfig,
   DirectTunBypassLookupResult,
   DirectTunBypassResolution,
+  DirectExcludeMode,
   resolveDirectTunBypass
 } from '../../core/routing/direct-tun-bypass'
 
@@ -11,12 +12,14 @@ const defaultLookupTimeoutMs = 2500
 export async function resolveRuntimeDirectTunBypass<T extends DirectTunBypassConfig>(input: {
   config: T
   enabled: boolean
+  mode?: DirectExcludeMode
   lookupTimeoutMs?: number
 }): Promise<DirectTunBypassResolution> {
   const lookupTimeoutMs = input.lookupTimeoutMs ?? defaultLookupTimeoutMs
   return resolveDirectTunBypass({
     config: input.config,
     enabled: input.enabled,
+    mode: input.mode,
     lookup: (hostname) => lookupWithTimeout(hostname, lookupTimeoutMs)
   })
 }

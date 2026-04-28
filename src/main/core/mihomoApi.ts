@@ -9,6 +9,10 @@ import { floatingWindow } from '../resolve/floatingWindow'
 import { mihomoIpcPath } from '../utils/dirs'
 import { safeSend } from '../utils/safeSend'
 import { debounce } from '../utils/debounce'
+import {
+  defaultLearnedProcessBypassTtlMs,
+  observeProcessBypassConnections
+} from '../runtime/learned-process-bypass-state'
 
 let axiosIns: AxiosInstance = null!
 let mihomoTrafficWs: WebSocket | null = null
@@ -393,8 +397,15 @@ const sendConnectionsDebounced = debounce((payload: ControllerConnections): void
   safeSend(mainWindow, 'mihomoConnections', payload)
 }, 100)
 
+const reloadLearnedProcessBypassDebounced = debounce((): void => {
+  void mihomoHotReloadConfig().catch(() => {
+    // The next regular config reload will pick up learned entries.
+  })
+}, 1000)
+
 export const stopMihomoConnections = (): void => {
   sendConnectionsDebounced.cancel()
+  reloadLearnedProcessBypassDebounced.cancel()
   if (mihomoConnectionsWs) {
     mihomoConnectionsWs.removeAllListeners()
     if (mihomoConnectionsWs.readyState === WebSocket.OPEN) {
@@ -419,7 +430,9 @@ const mihomoConnections = async (): Promise<void> => {
     const data = e.data as string
     connectionsRetry = 10
     try {
-      sendConnectionsDebounced(JSON.parse(data) as ControllerConnections)
+      const payload = JSON.parse(data) as ControllerConnections
+      void handleLearnedProcessBypassObservation(payload)
+      sendConnectionsDebounced(payload)
     } catch {
       // ignore
     }
@@ -437,5 +450,21 @@ const mihomoConnections = async (): Promise<void> => {
       mihomoConnectionsWs.close()
       mihomoConnectionsWs = null
     }
+  }
+}
+
+async function handleLearnedProcessBypassObservation(
+  payload: ControllerConnections
+): Promise<void> {
+  try {
+    const appConfig = await getAppConfig()
+    if (!(appConfig.learnedProcessBypassEnabled ?? true)) return
+    const result = observeProcessBypassConnections(payload, {
+      platform: process.platform,
+      ttlMs: appConfig.learnedProcessBypassTtlMs ?? defaultLearnedProcessBypassTtlMs
+    })
+    if (result.changed) reloadLearnedProcessBypassDebounced()
+  } catch {
+    // Observation is best-effort and must not break the connections stream.
   }
 }
