@@ -41,6 +41,7 @@ export type LinuxNativeProcessBypassIssueCode =
   | 'nft_apply_failed'
   | 'policy_route_apply_failed'
   | 'process_binding_failed'
+  | 'process_reconcile_failed'
   | 'cleanup_failed'
 
 export interface LinuxNativeProcessBypassIssue {
@@ -63,6 +64,12 @@ export interface NativeProcessBypassCapability {
   prerequisiteStatus?: LinuxNativeProcessBypassPrerequisiteStatus
   prerequisiteIssues?: LinuxNativeProcessBypassIssue[]
   boundPids?: number[]
+  trackedPids?: number[]
+  newlyBoundPidCount?: number
+  deadPidCleanupCount?: number
+  lastReconcileAt?: number
+  reconcileActive?: boolean
+  reconcileErrors?: string[]
   appliedAt?: number
 }
 
@@ -385,7 +392,11 @@ function cloneNativeProcessBypass(
   return {
     ...capability,
     diagnostics: [...capability.diagnostics],
-    activeProcesses: [...capability.activeProcesses]
+    activeProcesses: [...capability.activeProcesses],
+    prerequisiteIssues: capability.prerequisiteIssues?.map((issue) => ({ ...issue })),
+    boundPids: capability.boundPids ? [...capability.boundPids] : undefined,
+    trackedPids: capability.trackedPids ? [...capability.trackedPids] : undefined,
+    reconcileErrors: capability.reconcileErrors ? [...capability.reconcileErrors] : undefined
   }
 }
 

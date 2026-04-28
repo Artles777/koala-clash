@@ -31,6 +31,8 @@ export interface NativeProcessBypassOptions {
   paths?: Partial<LinuxNativeProcessBypassPaths>
   getUid?: () => number | undefined
   capEffHex?: string
+  reconcileIntervalMs?: number
+  now?: () => number
 }
 
 export interface NativeProcessBypassCommandPlan {
@@ -59,7 +61,13 @@ export interface LinuxNativeProcessBypassPaths {
 interface AppliedNativeProcessBypassState {
   processNames: string[]
   boundPids: number[]
+  trackedPids: number[]
   appliedAt: number
+  newlyBoundPidCount: number
+  deadPidCleanupCount: number
+  lastReconcileAt?: number
+  reconcileErrors: string[]
+  paths: LinuxNativeProcessBypassPaths
 }
 
 const linuxMechanism: NativeProcessBypassMechanism = 'linux-cgroup-fwmark'
@@ -76,6 +84,7 @@ const defaultPaths: LinuxNativeProcessBypassPaths = {
 const execFile = promisify(nodeExecFile)
 let currentStatus: NativeProcessBypassCapability | undefined
 let appliedState: AppliedNativeProcessBypassState | undefined
+let reconcileTimer: ReturnType<typeof setInterval> | undefined
 
 export function canUseNativeProcessBypass(
   options: NativeProcessBypassOptions = {}
@@ -266,11 +275,18 @@ export async function startNativeProcessBypass(
 
   try {
     await applyLinuxNativeProcessBypass({ ...options, processNames, pids })
+    const appliedAt = options.now?.() ?? Date.now()
     appliedState = {
       processNames,
       boundPids: pids,
-      appliedAt: Date.now()
+      trackedPids: pids,
+      appliedAt,
+      newlyBoundPidCount: 0,
+      deadPidCleanupCount: 0,
+      reconcileErrors: [],
+      paths
     }
+    startLinuxNativeProcessReconcileLoop(options)
     currentStatus = createCapability({
       ...base,
       active: true,
@@ -279,11 +295,16 @@ export async function startNativeProcessBypass(
       diagnostics: [
         `Native process bypass applied for ${processNames.length} process name(s).`,
         `Bound ${pids.length} process id(s) to cgroup ${cgroupName}.`,
-        'Future processes are not automatically bound in this MVP; reload to refresh process membership.'
+        'New matching processes are picked up by a lightweight reconcile loop.'
       ],
       activeProcesses: processNames,
       boundPids: pids,
-      appliedAt: appliedState.appliedAt,
+      trackedPids: pids,
+      newlyBoundPidCount: 0,
+      deadPidCleanupCount: 0,
+      reconcileActive: isReconcileLoopActive(),
+      reconcileErrors: [],
+      appliedAt,
       prerequisiteStatus: prerequisites.status,
       prerequisiteIssues: prerequisites.issues
     })
@@ -343,6 +364,66 @@ export function getNativeProcessBypassStatus(
   return cloneCapability(currentStatus)
 }
 
+export async function reconcileNativeProcessBypass(
+  options: NativeProcessBypassOptions = {}
+): Promise<NativeProcessBypassCapability> {
+  if (!appliedState || !currentStatus?.active || currentStatus.platform !== 'linux') {
+    return getNativeProcessBypassStatus(options)
+  }
+
+  const paths = { ...appliedState.paths, ...options.paths }
+  const currentPids = await findLinuxProcessPidsByExactName(appliedState.processNames, paths)
+  const currentPidSet = new Set(currentPids)
+  const trackedPidSet = new Set(appliedState.trackedPids)
+  const newPids = currentPids.filter((pid) => !trackedPidSet.has(pid))
+  const aliveTrackedPids = appliedState.trackedPids.filter((pid) => currentPidSet.has(pid))
+  const deadPidCount = appliedState.trackedPids.length - aliveTrackedPids.length
+  const errors: string[] = []
+
+  for (const pid of newPids) {
+    try {
+      await bindPidToBypassCgroup(pid, paths)
+      aliveTrackedPids.push(pid)
+    } catch (error) {
+      errors.push(`process_reconcile_failed: could not bind pid ${pid}: ${error}`)
+    }
+  }
+
+  appliedState.trackedPids = [...new Set(aliveTrackedPids)].sort((a, b) => a - b)
+  appliedState.boundPids = [...appliedState.trackedPids]
+  appliedState.newlyBoundPidCount += newPids.length - errors.length
+  appliedState.deadPidCleanupCount += deadPidCount
+  appliedState.lastReconcileAt = options.now?.() ?? Date.now()
+  if (errors.length > 0) {
+    appliedState.reconcileErrors = [...appliedState.reconcileErrors, ...errors].slice(-10)
+  }
+
+  const active = appliedState.trackedPids.length > 0
+  currentStatus = createCapability({
+    ...currentStatus,
+    active,
+    status: active ? 'active' : 'blocked',
+    diagnosticsReason:
+      errors.length > 0 ? 'process_reconcile_failed' : 'native_process_bypass_active',
+    diagnostics: [
+      ...currentStatus.diagnostics,
+      ...(newPids.length > 0
+        ? [`Reconcile bound ${newPids.length - errors.length} new process id(s).`]
+        : []),
+      ...(deadPidCount > 0 ? [`Reconcile removed ${deadPidCount} stale process id(s).`] : []),
+      ...errors
+    ],
+    boundPids: appliedState.boundPids,
+    trackedPids: appliedState.trackedPids,
+    newlyBoundPidCount: appliedState.newlyBoundPidCount,
+    deadPidCleanupCount: appliedState.deadPidCleanupCount,
+    lastReconcileAt: appliedState.lastReconcileAt,
+    reconcileActive: isReconcileLoopActive(),
+    reconcileErrors: appliedState.reconcileErrors
+  })
+  return cloneCapability(currentStatus)
+}
+
 export async function syncNativeProcessBypass(input: {
   enabled: boolean
   tunEnabled: boolean
@@ -366,15 +447,17 @@ export function getLinuxNativeProcessBypassPlan(): NativeProcessBypassCommandPla
     requiredCapabilities: ['CAP_NET_ADMIN', 'cgroup v2 write access'],
     setupSteps: [
       'detect cgroup v2, nft, ip, and required privileges',
-      'create an app-owned cgroup for currently-running matching processes',
+      'create an app-owned cgroup for exact-name matching processes',
       'install nftables route-hook rules that set a fwmark for cgroup traffic',
       'install a high-priority policy rule for the fwmark via the main routing table',
-      'move exact PROCESS-NAME matching PIDs into the bypass cgroup'
+      'move exact PROCESS-NAME matching PIDs into the bypass cgroup',
+      'periodically reconcile /proc and bind newly started matching PIDs'
     ],
     cleanupSteps: [
       'move bound PIDs back to the root cgroup where possible',
       'remove the fwmark policy routing rule',
       'delete the nftables table created by Koala',
+      'stop process reconciliation',
       'remove the app-owned cgroup when empty'
     ]
   }
@@ -449,7 +532,7 @@ async function applyLinuxNativeProcessBypass(
 
   try {
     for (const pid of options.pids) {
-      await fs.writeFile(path.join(cgroupPath, 'cgroup.procs'), `${pid}`)
+      await bindPidToBypassCgroup(pid, paths)
     }
   } catch (error) {
     throw createNativeBypassError('process_binding_failed', error)
@@ -461,13 +544,14 @@ async function cleanupLinuxNativeProcessBypass(
 ): Promise<{ ok: boolean; diagnostics: string[]; issues: LinuxNativeProcessBypassIssue[] }> {
   const platform = options.platform ?? process.platform
   if (platform !== 'linux') return { ok: true, diagnostics: [], issues: [] }
+  stopLinuxNativeProcessReconcileLoop()
   const paths = { ...defaultPaths, ...options.paths }
   const executor = options.executor ?? defaultExecutor
   const diagnostics: string[] = []
   const issues: LinuxNativeProcessBypassIssue[] = []
   let ok = true
 
-  const pids = options.pids ?? appliedState?.boundPids ?? []
+  const pids = options.pids ?? appliedState?.trackedPids ?? appliedState?.boundPids ?? []
   for (const pid of pids) {
     try {
       await fs.writeFile(path.join(paths.cgroupRoot, 'cgroup.procs'), `${pid}`)
@@ -502,6 +586,43 @@ async function cleanupLinuxNativeProcessBypass(
     appliedState = undefined
   }
   return { ok, diagnostics, issues }
+}
+
+async function bindPidToBypassCgroup(
+  pid: number,
+  paths: LinuxNativeProcessBypassPaths
+): Promise<void> {
+  await fs.writeFile(path.join(paths.cgroupRoot, cgroupName, 'cgroup.procs'), `${pid}`)
+}
+
+function startLinuxNativeProcessReconcileLoop(options: NativeProcessBypassOptions): void {
+  stopLinuxNativeProcessReconcileLoop()
+  const intervalMs = Math.max(options.reconcileIntervalMs ?? 5_000, 1_000)
+  reconcileTimer = setInterval(() => {
+    void reconcileNativeProcessBypass(options).catch((error) => {
+      if (!appliedState || !currentStatus) return
+      const message = `process_reconcile_failed: ${error}`
+      appliedState.reconcileErrors = [...appliedState.reconcileErrors, message].slice(-10)
+      currentStatus = createCapability({
+        ...currentStatus,
+        diagnosticsReason: 'process_reconcile_failed',
+        diagnostics: [...currentStatus.diagnostics, message],
+        reconcileActive: isReconcileLoopActive(),
+        reconcileErrors: appliedState.reconcileErrors
+      })
+    })
+  }, intervalMs)
+  reconcileTimer.unref?.()
+}
+
+function stopLinuxNativeProcessReconcileLoop(): void {
+  if (!reconcileTimer) return
+  clearInterval(reconcileTimer)
+  reconcileTimer = undefined
+}
+
+function isReconcileLoopActive(): boolean {
+  return Boolean(reconcileTimer)
 }
 
 async function findLinuxProcessPidsByExactName(
@@ -628,6 +749,12 @@ function createCapability(
         | 'prerequisiteStatus'
         | 'prerequisiteIssues'
         | 'boundPids'
+        | 'trackedPids'
+        | 'newlyBoundPidCount'
+        | 'deadPidCleanupCount'
+        | 'lastReconcileAt'
+        | 'reconcileActive'
+        | 'reconcileErrors'
         | 'appliedAt'
       >
     >
@@ -640,7 +767,9 @@ function createCapability(
     diagnostics: [...input.diagnostics],
     activeProcesses: [...input.activeProcesses],
     prerequisiteIssues: input.prerequisiteIssues?.map((issue) => ({ ...issue })),
-    boundPids: input.boundPids ? [...input.boundPids] : undefined
+    boundPids: input.boundPids ? [...input.boundPids] : undefined,
+    trackedPids: input.trackedPids ? [...input.trackedPids] : undefined,
+    reconcileErrors: input.reconcileErrors ? [...input.reconcileErrors] : undefined
   }
 }
 
@@ -678,6 +807,8 @@ function cloneCapability(capability: NativeProcessBypassCapability): NativeProce
     diagnostics: [...capability.diagnostics],
     activeProcesses: [...capability.activeProcesses],
     prerequisiteIssues: capability.prerequisiteIssues?.map((issue) => ({ ...issue })),
-    boundPids: capability.boundPids ? [...capability.boundPids] : undefined
+    boundPids: capability.boundPids ? [...capability.boundPids] : undefined,
+    trackedPids: capability.trackedPids ? [...capability.trackedPids] : undefined,
+    reconcileErrors: capability.reconcileErrors ? [...capability.reconcileErrors] : undefined
   }
 }

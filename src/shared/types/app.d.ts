@@ -942,6 +942,12 @@ interface AmneziaHelperTunSupportSnapshot {
   nativeProcessBypassDiagnostics: string[]
   nativeProcessBypassPrerequisiteStatus?: LinuxNativeProcessBypassPrerequisiteStatus
   nativeProcessBypassBoundPidCount: number
+  nativeProcessBypassTrackedPidCount: number
+  nativeProcessBypassNewlyBoundPidCount: number
+  nativeProcessBypassDeadPidCleanupCount: number
+  nativeProcessBypassLastReconcileAt?: number
+  nativeProcessBypassReconcileActive: boolean
+  nativeProcessBypassReconcileErrors: string[]
   processDirectEffectiveBypassMode: EffectiveBypassMode
   bypassCapabilityWarnings: string[]
   bypassCapabilitySummary: {
@@ -1045,6 +1051,11 @@ interface AmneziaHelperSupportSummaryExport {
     | 'nativeProcessBypassSupportedOnPlatform'
     | 'nativeProcessBypassActive'
     | 'nativeProcessBypassStatus'
+    | 'nativeProcessBypassTrackedPidCount'
+    | 'nativeProcessBypassNewlyBoundPidCount'
+    | 'nativeProcessBypassDeadPidCleanupCount'
+    | 'nativeProcessBypassLastReconcileAt'
+    | 'nativeProcessBypassReconcileActive'
     | 'processDirectEffectiveBypassMode'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'

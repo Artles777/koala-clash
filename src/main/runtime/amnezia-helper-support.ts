@@ -291,6 +291,12 @@ export interface AmneziaHelperTunSupportSnapshot {
   nativeProcessBypassDiagnostics: string[]
   nativeProcessBypassPrerequisiteStatus?: BypassCapabilityReport['nativeProcessBypass']['prerequisiteStatus']
   nativeProcessBypassBoundPidCount: number
+  nativeProcessBypassTrackedPidCount: number
+  nativeProcessBypassNewlyBoundPidCount: number
+  nativeProcessBypassDeadPidCleanupCount: number
+  nativeProcessBypassLastReconcileAt?: number
+  nativeProcessBypassReconcileActive: boolean
+  nativeProcessBypassReconcileErrors: string[]
   processDirectEffectiveBypassMode: EffectiveBypassMode
   bypassCapabilityWarnings: string[]
   bypassCapabilitySummary: BypassCapabilityReport['summary']
@@ -415,6 +421,11 @@ export interface AmneziaHelperSupportSummaryExport {
     | 'nativeProcessBypassSupportedOnPlatform'
     | 'nativeProcessBypassActive'
     | 'nativeProcessBypassStatus'
+    | 'nativeProcessBypassTrackedPidCount'
+    | 'nativeProcessBypassNewlyBoundPidCount'
+    | 'nativeProcessBypassDeadPidCleanupCount'
+    | 'nativeProcessBypassLastReconcileAt'
+    | 'nativeProcessBypassReconcileActive'
     | 'processDirectEffectiveBypassMode'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'
@@ -784,6 +795,17 @@ export function createTunSupportSnapshot(
       bypassCapabilities?.nativeProcessBypass.prerequisiteStatus,
     nativeProcessBypassBoundPidCount:
       bypassCapabilities?.nativeProcessBypass.boundPids?.length ?? 0,
+    nativeProcessBypassTrackedPidCount:
+      bypassCapabilities?.nativeProcessBypass.trackedPids?.length ?? 0,
+    nativeProcessBypassNewlyBoundPidCount:
+      bypassCapabilities?.nativeProcessBypass.newlyBoundPidCount ?? 0,
+    nativeProcessBypassDeadPidCleanupCount:
+      bypassCapabilities?.nativeProcessBypass.deadPidCleanupCount ?? 0,
+    nativeProcessBypassLastReconcileAt: bypassCapabilities?.nativeProcessBypass.lastReconcileAt,
+    nativeProcessBypassReconcileActive:
+      bypassCapabilities?.nativeProcessBypass.reconcileActive ?? false,
+    nativeProcessBypassReconcileErrors:
+      bypassCapabilities?.nativeProcessBypass.reconcileErrors?.map((error) => error) ?? [],
     processDirectEffectiveBypassMode: getProcessDirectEffectiveBypassMode(bypassCapabilities),
     bypassCapabilityWarnings: bypassCapabilities?.warnings.map((warning) => warning) ?? [],
     bypassCapabilitySummary: bypassCapabilities?.summary ?? {
@@ -1312,6 +1334,11 @@ function createSupportSummaryExport(input: {
       nativeProcessBypassSupportedOnPlatform: input.tun.nativeProcessBypassSupportedOnPlatform,
       nativeProcessBypassActive: input.tun.nativeProcessBypassActive,
       nativeProcessBypassStatus: input.tun.nativeProcessBypassStatus,
+      nativeProcessBypassTrackedPidCount: input.tun.nativeProcessBypassTrackedPidCount,
+      nativeProcessBypassNewlyBoundPidCount: input.tun.nativeProcessBypassNewlyBoundPidCount,
+      nativeProcessBypassDeadPidCleanupCount: input.tun.nativeProcessBypassDeadPidCleanupCount,
+      nativeProcessBypassLastReconcileAt: input.tun.nativeProcessBypassLastReconcileAt,
+      nativeProcessBypassReconcileActive: input.tun.nativeProcessBypassReconcileActive,
       processDirectEffectiveBypassMode: input.tun.processDirectEffectiveBypassMode,
       helperRuleReliability: input.tun.helperRuleReliability,
       helperRuleReliabilityReason: input.tun.helperRuleReliabilityReason

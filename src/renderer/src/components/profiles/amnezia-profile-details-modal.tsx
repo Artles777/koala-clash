@@ -1156,7 +1156,23 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                   />
                   <RuntimeRow
                     label={t('profile.nativeProcessBypassPids')}
-                    value={String(supportSnapshot?.tun.nativeProcessBypassBoundPidCount ?? 0)}
+                    value={String(supportSnapshot?.tun.nativeProcessBypassTrackedPidCount ?? 0)}
+                  />
+                  <RuntimeRow
+                    label={t('profile.nativeProcessBypassReconcile')}
+                    value={
+                      supportSnapshot?.tun.nativeProcessBypassReconcileActive
+                        ? t('profile.tunBypassActive')
+                        : t('profile.tunBypassInactive')
+                    }
+                  />
+                  <RuntimeRow
+                    label={t('profile.nativeProcessBypassNewPids')}
+                    value={String(supportSnapshot?.tun.nativeProcessBypassNewlyBoundPidCount ?? 0)}
+                  />
+                  <RuntimeRow
+                    label={t('profile.nativeProcessBypassStalePids')}
+                    value={String(supportSnapshot?.tun.nativeProcessBypassDeadPidCleanupCount ?? 0)}
                   />
                   <RuntimeRow
                     label={t('profile.processDirectBypassMode')}

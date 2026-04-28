@@ -45,15 +45,34 @@ The Linux adapter now has an MVP apply/cleanup path. It attempts to:
 2. create `/sys/fs/cgroup/koala-clash-bypass`,
 3. install an app-owned nftables table that marks cgroup traffic,
 4. install an `ip rule` for that fwmark,
-5. move already-running exact-name matching PIDs into the cgroup.
+5. move exact-name matching PIDs into the cgroup,
+6. keep a lightweight reconcile loop running while the bypass is active.
 
 It reports `active` only after all steps complete. If any step fails, it rolls back the app-owned nft/ip/cgroup state where possible and reports a blocker diagnostic such as `nft_apply_failed`, `policy_route_apply_failed`, or `process_binding_failed`.
 
-The MVP only binds processes that are already running during config generation/reload. New future processes are not automatically moved into the bypass cgroup yet; reload the runtime config to refresh membership.
+## Process Reconcile Loop
+
+When Linux native bypass is active, Koala periodically scans `/proc` for exact `/proc/<pid>/comm` matches against `PROCESS-NAME,DIRECT` rules. Newly discovered matching PIDs are bound to `/sys/fs/cgroup/koala-clash-bypass`; dead PIDs are removed from in-memory tracking.
+
+This is intentionally conservative:
+
+- matching is exact process name only,
+- no regex or process tree tracking is performed,
+- polling is low-frequency and avoids a busy loop,
+- failures are reported through `process_reconcile_failed` diagnostics,
+- persisted Mihomo rules and profile files are not changed.
+
+The reconcile state is exposed in support/debug data:
+
+- tracked PID count,
+- newly rebound PID count,
+- dead PID cleanup count,
+- last reconcile timestamp,
+- reconcile errors.
 
 ## Remaining Work
 
 - add a privileged Linux service/helper path so GUI launches do not need direct root/CAP_NET_ADMIN,
-- track future process launches and refresh cgroup assignments continuously,
+- replace polling with a stronger platform event/service implementation if needed,
 - add cleanup/recovery for native routing state,
 - add Linux packaged smoke validation for true native process bypass.

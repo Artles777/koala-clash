@@ -1,5 +1,5 @@
 import * as assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { describe, it } from 'node:test'
@@ -14,6 +14,8 @@ import {
   canUseNativeProcessBypass,
   detectLinuxNativeProcessBypassPrerequisites,
   getLinuxNativeProcessBypassPlan,
+  getNativeProcessBypassStatus,
+  reconcileNativeProcessBypass,
   startNativeProcessBypass,
   stopNativeProcessBypass,
   type NativeProcessBypassExecutor
@@ -229,6 +231,8 @@ describe('Linux native process bypass MVP', () => {
     assert.equal(capability.active, true)
     assert.deepEqual(capability.activeProcesses, ['Telegram'])
     assert.deepEqual(capability.boundPids, [101])
+    assert.deepEqual(capability.trackedPids, [101])
+    assert.equal(capability.reconcileActive, true)
     assert.ok(executor.calls.some((call) => call.command === 'nft' && call.args[0] === '-f'))
     assert.ok(
       executor.calls.some(
@@ -253,6 +257,70 @@ describe('Linux native process bypass MVP', () => {
         (call) => call.command === 'nft' && call.args[0] === 'delete' && call.args.includes('table')
       )
     )
+    assert.equal(getNativeProcessBypassStatus({ enabled: true, platform: 'linux' }).active, false)
+  })
+
+  it('reconciles newly started exact-name matching Linux processes', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'koala-native-bypass-'))
+    const cgroupRoot = path.join(root, 'cgroup')
+    const procRoot = path.join(root, 'proc')
+    await mkdir(cgroupRoot)
+    await writeFile(path.join(cgroupRoot, 'cgroup.controllers'), 'cpu io memory')
+    await mkdir(path.join(procRoot, '101'), { recursive: true })
+    await writeFile(path.join(procRoot, '101', 'comm'), 'Telegram\n')
+    const executor = createMockExecutor({ availableCommands: ['ip', 'nft'] })
+
+    await startNativeProcessBypass({
+      enabled: true,
+      platform: 'linux',
+      processNames: ['Telegram'],
+      executor,
+      paths: { cgroupRoot, procRoot },
+      getUid: () => 0,
+      now: () => 10
+    })
+
+    await mkdir(path.join(procRoot, '103'), { recursive: true })
+    await writeFile(path.join(procRoot, '103', 'comm'), 'Telegram\n')
+    const afterNewProcess = await reconcileNativeProcessBypass({
+      platform: 'linux',
+      paths: { cgroupRoot, procRoot },
+      now: () => 20
+    })
+
+    assert.deepEqual(afterNewProcess.trackedPids, [101, 103])
+    assert.equal(afterNewProcess.newlyBoundPidCount, 1)
+    assert.equal(afterNewProcess.lastReconcileAt, 20)
+    assert.equal(afterNewProcess.reconcileActive, true)
+
+    const afterDuplicateReconcile = await reconcileNativeProcessBypass({
+      platform: 'linux',
+      paths: { cgroupRoot, procRoot },
+      now: () => 30
+    })
+
+    assert.deepEqual(afterDuplicateReconcile.trackedPids, [101, 103])
+    assert.equal(afterDuplicateReconcile.newlyBoundPidCount, 1)
+
+    await rm(path.join(procRoot, '101'), { recursive: true, force: true })
+    const afterDeadProcess = await reconcileNativeProcessBypass({
+      platform: 'linux',
+      paths: { cgroupRoot, procRoot },
+      now: () => 40
+    })
+
+    assert.deepEqual(afterDeadProcess.trackedPids, [103])
+    assert.equal(afterDeadProcess.deadPidCleanupCount, 1)
+
+    const stopped = await stopNativeProcessBypass({
+      enabled: true,
+      platform: 'linux',
+      executor,
+      paths: { cgroupRoot, procRoot }
+    })
+
+    assert.equal(stopped.active, false)
+    assert.equal(stopped.reconcileActive, undefined)
   })
 
   it('reports nft apply failures and falls back to non-active capability', async () => {
