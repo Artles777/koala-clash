@@ -22,6 +22,17 @@ export interface LinuxNativeProcessBypassPrerequisites {
   issues: LinuxNativeProcessBypassIssue[]
 }
 
+export interface WindowsNativeProcessBypassPrerequisites {
+  platform: string
+  status: LinuxNativeProcessBypassPrerequisiteStatus
+  wfpServiceAvailable: boolean
+  controllerAvailable: boolean
+  controllerCommand: string
+  hasRequiredPrivileges: boolean
+  dataPlaneImplemented: boolean
+  issues: LinuxNativeProcessBypassIssue[]
+}
+
 export interface NativeProcessBypassOptions {
   enabled?: boolean
   platform?: string
@@ -33,6 +44,9 @@ export interface NativeProcessBypassOptions {
   capEffHex?: string
   reconcileIntervalMs?: number
   now?: () => number
+  windowsControllerCommand?: string
+  windowsSessionId?: string
+  windowsController?: WindowsNativeProcessBypassController
 }
 
 export interface NativeProcessBypassCommandPlan {
@@ -58,6 +72,30 @@ export interface LinuxNativeProcessBypassPaths {
   procRoot: string
 }
 
+export interface WindowsNativeProcessBypassControllerInput {
+  sessionId: string
+  processNames: string[]
+  serviceName: string
+}
+
+export interface WindowsNativeProcessBypassControllerResult {
+  ok: boolean
+  dataPlaneActive: boolean
+  appliedProcessNames?: string[]
+  diagnostics?: string[]
+  reasonCode?: LinuxNativeProcessBypassIssueCode
+  message?: string
+}
+
+export interface WindowsNativeProcessBypassController {
+  apply(
+    input: WindowsNativeProcessBypassControllerInput
+  ): Promise<WindowsNativeProcessBypassControllerResult>
+  cleanup(
+    input: WindowsNativeProcessBypassControllerInput
+  ): Promise<WindowsNativeProcessBypassControllerResult>
+}
+
 interface AppliedNativeProcessBypassState {
   processNames: string[]
   boundPids: number[]
@@ -70,7 +108,17 @@ interface AppliedNativeProcessBypassState {
   paths: LinuxNativeProcessBypassPaths
 }
 
+interface AppliedWindowsNativeProcessBypassState {
+  sessionId: string
+  processNames: string[]
+  appliedAt: number
+  controllerCommand: string
+}
+
 const linuxMechanism: NativeProcessBypassMechanism = 'linux-cgroup-fwmark'
+const windowsMechanism: NativeProcessBypassMechanism = 'windows-wfp-service'
+const windowsServiceName = 'KoalaProcessBypass'
+const windowsControllerCommand = 'koala-process-bypassctl.exe'
 const tableName = 'koala_process_bypass'
 const chainName = 'output'
 const cgroupName = 'koala-clash-bypass'
@@ -84,6 +132,7 @@ const defaultPaths: LinuxNativeProcessBypassPaths = {
 const execFile = promisify(nodeExecFile)
 let currentStatus: NativeProcessBypassCapability | undefined
 let appliedState: AppliedNativeProcessBypassState | undefined
+let windowsAppliedState: AppliedWindowsNativeProcessBypassState | undefined
 let reconcileTimer: ReturnType<typeof setInterval> | undefined
 
 export function canUseNativeProcessBypass(
@@ -93,6 +142,62 @@ export function canUseNativeProcessBypass(
   const platform = options.platform ?? process.platform
   const activeProcesses = options.activeProcesses ?? []
 
+  if (platform === 'darwin') {
+    return createCapability({
+      enabled,
+      platform,
+      supportedOnPlatform: false,
+      active: false,
+      status: 'unsupported',
+      platformMode: 'macos_fallback_only',
+      nativeDataPlaneActive: false,
+      fallbackOnly: true,
+      fallbackReason: 'macos_native_process_bypass_unsupported',
+      diagnosticsReason: 'macos_native_process_bypass_unsupported',
+      diagnostics: [
+        'macOS native PROCESS-NAME bypass is not supported in the current architecture.',
+        'macOS uses address-based DIRECT excludes and learned process-to-IP bypass fallback only.'
+      ],
+      activeProcesses: []
+    })
+  }
+
+  if (platform === 'win32') {
+    const common = {
+      platform,
+      supportedOnPlatform: true,
+      active: false,
+      mechanism: windowsMechanism,
+      platformMode: 'windows_wfp_service' as const,
+      nativeDataPlaneActive: false,
+      requiresPrivileges: true,
+      requiresService: true,
+      activeProcesses
+    }
+    if (!enabled) {
+      return createCapability({
+        ...common,
+        enabled: false,
+        status: 'disabled',
+        diagnosticsReason: 'feature_disabled',
+        diagnostics: [
+          'Windows WFP native process bypass is available through a privileged service/controller contract, but the feature is disabled.'
+        ]
+      })
+    }
+
+    return createCapability({
+      ...common,
+      enabled: true,
+      status: 'available',
+      diagnosticsReason: 'windows_wfp_service_pending_apply',
+      diagnostics: [
+        'Windows native process bypass uses the KoalaProcessBypass WFP service and koala-process-bypassctl controller.',
+        'The data plane becomes active only after the controller confirms that process-aware WFP policy was applied.'
+      ]
+    })
+  }
+
   if (platform !== 'linux') {
     return createCapability({
       enabled,
@@ -100,9 +205,13 @@ export function canUseNativeProcessBypass(
       supportedOnPlatform: false,
       active: false,
       status: 'unsupported',
+      platformMode: 'unsupported',
+      nativeDataPlaneActive: false,
+      fallbackOnly: true,
+      fallbackReason: 'platform_unsupported',
       diagnosticsReason: 'platform_unsupported',
       diagnostics: [
-        'Native process bypass is currently implemented only on Linux. Learned bypass remains the fallback.'
+        'Native process bypass is not supported on this platform. Learned bypass remains the fallback where available.'
       ],
       activeProcesses: []
     })
@@ -115,6 +224,8 @@ export function canUseNativeProcessBypass(
       supportedOnPlatform: true,
       active: false,
       status: 'disabled',
+      platformMode: 'linux_native',
+      nativeDataPlaneActive: false,
       diagnosticsReason: 'feature_disabled',
       diagnostics: ['Linux native process bypass is available, but the feature is disabled.'],
       activeProcesses: []
@@ -127,6 +238,8 @@ export function canUseNativeProcessBypass(
     supportedOnPlatform: true,
     active: false,
     status: 'available',
+    platformMode: 'linux_native',
+    nativeDataPlaneActive: false,
     diagnosticsReason: 'linux_supported_pending_apply',
     diagnostics: [
       'Linux native process bypass can be attempted with cgroup v2, nftables/fwmark, and policy routing.',
@@ -210,10 +323,212 @@ export async function detectLinuxNativeProcessBypassPrerequisites(
   }
 }
 
+export async function detectWindowsNativeProcessBypassPrerequisites(
+  options: NativeProcessBypassOptions = {}
+): Promise<WindowsNativeProcessBypassPrerequisites> {
+  const platform = options.platform ?? process.platform
+  const executor = options.executor ?? defaultExecutor
+  const controllerCommand = options.windowsControllerCommand ?? windowsControllerCommand
+  const issues: LinuxNativeProcessBypassIssue[] = []
+
+  if (platform !== 'win32') {
+    return {
+      platform,
+      status: 'not_windows',
+      wfpServiceAvailable: false,
+      controllerAvailable: false,
+      controllerCommand,
+      hasRequiredPrivileges: false,
+      dataPlaneImplemented: false,
+      issues: [
+        {
+          code: 'not_windows',
+          message: 'Windows native process bypass scaffold is Windows-only.'
+        }
+      ]
+    }
+  }
+
+  const hasRequiredPrivileges = await windowsAdministratorAvailable(executor)
+  const wfpServiceAvailable = await windowsWfpServiceAvailable(executor)
+  const controllerAvailable =
+    options.windowsController !== undefined ||
+    (await windowsControllerAvailable(executor, controllerCommand))
+  const dataPlaneImplemented = controllerAvailable
+
+  if (!hasRequiredPrivileges) {
+    issues.push({
+      code: 'windows_admin_required',
+      message: 'Windows native process bypass requires an elevated helper service.'
+    })
+  }
+  if (!wfpServiceAvailable) {
+    issues.push({
+      code: 'windows_wfp_service_missing',
+      message: `Windows WFP bypass service ${windowsServiceName} is not installed.`
+    })
+  }
+  if (!controllerAvailable) {
+    issues.push({
+      code: 'windows_controller_missing',
+      message: `Windows WFP bypass controller ${controllerCommand} is not available.`
+    })
+  }
+
+  const status: LinuxNativeProcessBypassPrerequisiteStatus = !wfpServiceAvailable
+    ? 'windows_service_missing'
+    : !hasRequiredPrivileges
+      ? 'insufficient_privileges'
+      : !controllerAvailable
+        ? 'missing_prerequisites'
+        : 'supported'
+
+  return {
+    platform,
+    status,
+    wfpServiceAvailable,
+    controllerAvailable,
+    controllerCommand,
+    hasRequiredPrivileges,
+    dataPlaneImplemented,
+    issues
+  }
+}
+
 export async function startNativeProcessBypass(
   options: NativeProcessBypassOptions = {}
 ): Promise<NativeProcessBypassCapability> {
   const base = canUseNativeProcessBypass(options)
+  if (base.platform === 'win32' && base.enabled) {
+    await cleanupLinuxNativeProcessBypass(options)
+    await cleanupWindowsNativeProcessBypass(options)
+    const processNames = normalizeProcessNames(
+      options.processNames ?? options.activeProcesses ?? []
+    )
+    if (processNames.length === 0) {
+      currentStatus = createCapability({
+        ...base,
+        active: false,
+        status: 'available',
+        diagnosticsReason: 'no_process_names',
+        diagnostics: [
+          ...base.diagnostics,
+          'No PROCESS-NAME DIRECT rules are eligible for Windows native bypass.'
+        ]
+      })
+      return cloneCapability(currentStatus)
+    }
+
+    const prerequisites = await detectWindowsNativeProcessBypassPrerequisites(options)
+    const blocked = prerequisites.status !== 'supported'
+    const prerequisiteDiagnostics = prerequisites.issues.map(
+      (issue) => `${issue.code}: ${issue.message}`
+    )
+    const prerequisiteFields = {
+      prerequisiteStatus: prerequisites.status,
+      prerequisiteIssues: prerequisites.issues,
+      windowsServiceAvailable: prerequisites.wfpServiceAvailable,
+      windowsControllerAvailable: prerequisites.controllerAvailable
+    }
+    if (blocked) {
+      currentStatus = createCapability({
+        ...base,
+        ...prerequisiteFields,
+        active: false,
+        status: 'blocked',
+        diagnosticsReason: prerequisites.status,
+        diagnostics: [...base.diagnostics, ...prerequisiteDiagnostics]
+      })
+      return cloneCapability(currentStatus)
+    }
+
+    try {
+      const controller =
+        options.windowsController ??
+        createWindowsNativeProcessBypassController({
+          executor: options.executor ?? defaultExecutor,
+          command: prerequisites.controllerCommand
+        })
+      const sessionId = options.windowsSessionId ?? createWindowsNativeProcessBypassSessionId()
+      const result = await controller.apply({
+        sessionId,
+        processNames,
+        serviceName: windowsServiceName
+      })
+      const appliedProcessNames = normalizeProcessNames(
+        result.appliedProcessNames && result.appliedProcessNames.length > 0
+          ? result.appliedProcessNames
+          : processNames
+      )
+      if (!result.ok || !result.dataPlaneActive || appliedProcessNames.length === 0) {
+        const issue = createIssue(
+          result.reasonCode ?? 'windows_data_plane_inactive',
+          result.message ??
+            'Windows WFP controller did not report an active process-aware data plane.'
+        )
+        currentStatus = createCapability({
+          ...base,
+          ...prerequisiteFields,
+          active: false,
+          status: 'blocked',
+          diagnosticsReason: issue.code,
+          diagnostics: [
+            ...base.diagnostics,
+            ...prerequisiteDiagnostics,
+            ...(result.diagnostics ?? []),
+            `${issue.code}: ${issue.message}`
+          ],
+          nativeDataPlaneActive: false,
+          windowsSessionId: sessionId,
+          windowsAppliedProcessCount: 0
+        })
+        return cloneCapability(currentStatus)
+      }
+
+      const appliedAt = options.now?.() ?? Date.now()
+      windowsAppliedState = {
+        sessionId,
+        processNames: appliedProcessNames,
+        appliedAt,
+        controllerCommand: prerequisites.controllerCommand
+      }
+      currentStatus = createCapability({
+        ...base,
+        ...prerequisiteFields,
+        active: true,
+        status: 'active',
+        diagnosticsReason: 'windows_native_process_bypass_applied',
+        diagnostics: [
+          `Windows native process bypass applied for ${appliedProcessNames.length} process name(s).`,
+          `WFP service ${windowsServiceName} reported an active data plane.`,
+          ...(result.diagnostics ?? [])
+        ],
+        nativeDataPlaneActive: true,
+        activeProcesses: appliedProcessNames,
+        appliedAt,
+        windowsSessionId: sessionId,
+        windowsAppliedProcessCount: appliedProcessNames.length
+      })
+      return cloneCapability(currentStatus)
+    } catch (error) {
+      const issue = createIssue('windows_apply_failed', String(error))
+      currentStatus = createCapability({
+        ...base,
+        ...prerequisiteFields,
+        active: false,
+        status: 'blocked',
+        diagnosticsReason: issue.code,
+        diagnostics: [
+          ...base.diagnostics,
+          ...prerequisiteDiagnostics,
+          `${issue.code}: ${issue.message}`
+        ],
+        nativeDataPlaneActive: false
+      })
+      return cloneCapability(currentStatus)
+    }
+  }
+
   if (base.platform !== 'linux' || !base.enabled) {
     await cleanupLinuxNativeProcessBypass(options)
     currentStatus = base
@@ -329,13 +644,20 @@ export async function stopNativeProcessBypass(
   options: NativeProcessBypassOptions = {}
 ): Promise<NativeProcessBypassCapability> {
   const previous = currentStatus
-  const cleanup = await cleanupLinuxNativeProcessBypass({
-    ...options,
-    activeProcesses: previous?.activeProcesses
-  })
+  const previousPlatform = previous?.platform ?? options.platform ?? process.platform
+  const cleanup =
+    previousPlatform === 'win32'
+      ? await cleanupWindowsNativeProcessBypass({
+          ...options,
+          activeProcesses: previous?.activeProcesses
+        })
+      : await cleanupLinuxNativeProcessBypass({
+          ...options,
+          activeProcesses: previous?.activeProcesses
+        })
   currentStatus = canUseNativeProcessBypass({
     enabled: previous?.enabled ?? options.enabled ?? false,
-    platform: previous?.platform ?? options.platform ?? process.platform
+    platform: previousPlatform
   })
   if (!cleanup.ok) {
     currentStatus = createCapability({
@@ -459,6 +781,29 @@ export function getLinuxNativeProcessBypassPlan(): NativeProcessBypassCommandPla
       'delete the nftables table created by Koala',
       'stop process reconciliation',
       'remove the app-owned cgroup when empty'
+    ]
+  }
+}
+
+export function getWindowsNativeProcessBypassPlan(): NativeProcessBypassCommandPlan {
+  return {
+    mechanism: windowsMechanism,
+    requiredCapabilities: [
+      'administrator/elevated context',
+      `${windowsServiceName} WFP helper service`,
+      `${windowsControllerCommand} controller`,
+      'Windows Filtering Platform'
+    ],
+    setupSteps: [
+      'detect Windows platform and elevated service prerequisites',
+      `resolve the ${windowsServiceName} WFP helper service`,
+      `resolve the ${windowsControllerCommand} controller`,
+      'ask the controller to apply process-aware WFP policy for exact PROCESS-NAME rules',
+      'treat native bypass as active only when the controller reports dataPlaneActive'
+    ],
+    cleanupSteps: [
+      'ask the controller to remove service-owned WFP policy for the active runtime session',
+      'fall back to learned process-to-IP bypass when the service/controller is unavailable'
     ]
   }
 }
@@ -588,6 +933,48 @@ async function cleanupLinuxNativeProcessBypass(
   return { ok, diagnostics, issues }
 }
 
+async function cleanupWindowsNativeProcessBypass(
+  options: NativeProcessBypassOptions
+): Promise<{ ok: boolean; diagnostics: string[]; issues: LinuxNativeProcessBypassIssue[] }> {
+  const platform = options.platform ?? process.platform
+  if (platform !== 'win32' || !windowsAppliedState) {
+    windowsAppliedState = undefined
+    return { ok: true, diagnostics: [], issues: [] }
+  }
+
+  const state = windowsAppliedState
+  const controller =
+    options.windowsController ??
+    createWindowsNativeProcessBypassController({
+      executor: options.executor ?? defaultExecutor,
+      command: options.windowsControllerCommand ?? state.controllerCommand
+    })
+
+  try {
+    const result = await controller.cleanup({
+      sessionId: state.sessionId,
+      processNames: state.processNames,
+      serviceName: windowsServiceName
+    })
+    if (!result.ok) {
+      const issue = createIssue(
+        result.reasonCode ?? 'windows_cleanup_failed',
+        result.message ?? 'Windows WFP controller cleanup failed.'
+      )
+      return {
+        ok: false,
+        diagnostics: [...(result.diagnostics ?? []), `${issue.code}: ${issue.message}`],
+        issues: [issue]
+      }
+    }
+    windowsAppliedState = undefined
+    return { ok: true, diagnostics: result.diagnostics ?? [], issues: [] }
+  } catch (error) {
+    const issue = createIssue('windows_cleanup_failed', String(error))
+    return { ok: false, diagnostics: [`${issue.code}: ${issue.message}`], issues: [issue] }
+  }
+}
+
 async function bindPidToBypassCgroup(
   pid: number,
   paths: LinuxNativeProcessBypassPaths
@@ -688,6 +1075,114 @@ async function commandAvailable(
   }
 }
 
+async function windowsControllerAvailable(
+  executor: NativeProcessBypassExecutor,
+  command: string
+): Promise<boolean> {
+  try {
+    await executor.run('where.exe', [command])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function windowsAdministratorAvailable(
+  executor: NativeProcessBypassExecutor
+): Promise<boolean> {
+  try {
+    await executor.run('net.exe', ['session'])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function windowsWfpServiceAvailable(executor: NativeProcessBypassExecutor): Promise<boolean> {
+  const script = [
+    `$service = Get-Service -Name '${windowsServiceName}' -ErrorAction SilentlyContinue`,
+    'if ($null -eq $service) { exit 1 }',
+    'exit 0'
+  ].join('; ')
+
+  try {
+    await executor.run('powershell.exe', ['-NoProfile', '-Command', script])
+    return true
+  } catch {
+    return false
+  }
+}
+
+function createWindowsNativeProcessBypassController(input: {
+  executor: NativeProcessBypassExecutor
+  command: string
+}): WindowsNativeProcessBypassController {
+  return {
+    async apply(request) {
+      const args = buildWindowsControllerArgs('apply', request)
+      const result = await input.executor.run(input.command, args)
+      return parseWindowsControllerResult(result.stdout, 'windows_apply_failed')
+    },
+    async cleanup(request) {
+      const args = buildWindowsControllerArgs('cleanup', request)
+      const result = await input.executor.run(input.command, args)
+      return parseWindowsControllerResult(result.stdout, 'windows_cleanup_failed')
+    }
+  }
+}
+
+function buildWindowsControllerArgs(
+  action: 'apply' | 'cleanup',
+  input: WindowsNativeProcessBypassControllerInput
+): string[] {
+  const args = [action, '--session', input.sessionId, '--service', input.serviceName, '--json']
+  for (const processName of normalizeProcessNames(input.processNames)) {
+    args.push('--process-name', processName)
+  }
+  return args
+}
+
+function parseWindowsControllerResult(
+  stdout: string,
+  fallbackReasonCode: LinuxNativeProcessBypassIssueCode
+): WindowsNativeProcessBypassControllerResult {
+  const line = stdout
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.startsWith('{') && entry.endsWith('}'))
+    .reverse()[0]
+  if (!line) {
+    throw createNativeBypassError(
+      fallbackReasonCode,
+      'Windows WFP controller did not return a JSON result.'
+    )
+  }
+
+  const parsed = JSON.parse(line) as Record<string, unknown>
+  const reasonCode =
+    typeof parsed.reasonCode === 'string'
+      ? toNativeBypassIssueCode(parsed.reasonCode, fallbackReasonCode)
+      : undefined
+  return {
+    ok: parsed.ok === true,
+    dataPlaneActive: parsed.dataPlaneActive === true || parsed.active === true,
+    appliedProcessNames: Array.isArray(parsed.appliedProcessNames)
+      ? parsed.appliedProcessNames.filter((name): name is string => typeof name === 'string')
+      : undefined,
+    diagnostics: Array.isArray(parsed.diagnostics)
+      ? parsed.diagnostics.filter(
+          (diagnostic): diagnostic is string => typeof diagnostic === 'string'
+        )
+      : undefined,
+    reasonCode,
+    message: typeof parsed.message === 'string' ? parsed.message : undefined
+  }
+}
+
+function createWindowsNativeProcessBypassSessionId(): string {
+  return `koala-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 async function exists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath, fsConstants.F_OK)
@@ -746,6 +1241,10 @@ function createCapability(
         | 'mechanism'
         | 'requiresPrivileges'
         | 'requiresService'
+        | 'platformMode'
+        | 'nativeDataPlaneActive'
+        | 'fallbackOnly'
+        | 'fallbackReason'
         | 'prerequisiteStatus'
         | 'prerequisiteIssues'
         | 'boundPids'
@@ -756,6 +1255,10 @@ function createCapability(
         | 'reconcileActive'
         | 'reconcileErrors'
         | 'appliedAt'
+        | 'windowsServiceAvailable'
+        | 'windowsControllerAvailable'
+        | 'windowsSessionId'
+        | 'windowsAppliedProcessCount'
       >
     >
 ): NativeProcessBypassCapability {
@@ -799,6 +1302,40 @@ function createIssue(
   message: string
 ): LinuxNativeProcessBypassIssue {
   return { code, message }
+}
+
+function toNativeBypassIssueCode(
+  code: string,
+  fallback: LinuxNativeProcessBypassIssueCode
+): LinuxNativeProcessBypassIssueCode {
+  switch (code) {
+    case 'not_linux':
+    case 'not_windows':
+    case 'cgroup_v2_missing':
+    case 'nft_missing':
+    case 'ip_missing':
+    case 'insufficient_privileges':
+    case 'cgroup_not_writable':
+    case 'windows_wfp_service_missing':
+    case 'windows_controller_missing':
+    case 'windows_admin_required':
+    case 'windows_data_plane_pending':
+    case 'windows_data_plane_inactive':
+    case 'windows_apply_failed':
+    case 'windows_cleanup_failed':
+    case 'macos_native_bypass_unsupported':
+    case 'no_process_names':
+    case 'no_matching_processes':
+    case 'cgroup_creation_failed':
+    case 'nft_apply_failed':
+    case 'policy_route_apply_failed':
+    case 'process_binding_failed':
+    case 'process_reconcile_failed':
+    case 'cleanup_failed':
+      return code
+    default:
+      return fallback
+  }
 }
 
 function cloneCapability(capability: NativeProcessBypassCapability): NativeProcessBypassCapability {

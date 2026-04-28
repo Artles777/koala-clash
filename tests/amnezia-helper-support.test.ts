@@ -481,6 +481,129 @@ describe('Amnezia helper support diagnostics', () => {
     )
   })
 
+  it('surfaces Windows WFP scaffold diagnostics without claiming true bypass', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      rulePacks: [],
+      tun: createTunSupportSnapshot(true, undefined, undefined, undefined, undefined, undefined, {
+        platform: 'win32',
+        tunEnabled: true,
+        nativeProcessBypass: {
+          enabled: true,
+          platform: 'win32',
+          supportedOnPlatform: true,
+          active: false,
+          status: 'blocked',
+          mechanism: 'windows-wfp-service',
+          platformMode: 'windows_wfp_service',
+          nativeDataPlaneActive: false,
+          requiresPrivileges: true,
+          requiresService: true,
+          diagnosticsReason: 'windows_service_missing',
+          diagnostics: ['Windows WFP service is missing.'],
+          activeProcesses: []
+        },
+        rules: [
+          {
+            rule: 'PROCESS-NAME,Telegram,DIRECT',
+            ruleType: 'PROCESS-NAME',
+            value: 'Telegram',
+            target: 'DIRECT',
+            effectiveBypassMode: 'direct_only',
+            platformSupport: 'degraded',
+            requiresPrivileges: true,
+            requiresNativeBypass: true,
+            diagnosticsReason: 'native_process_bypass_not_active',
+            diagnosticsMessage: 'Windows WFP data plane is not active.'
+          }
+        ],
+        summary: {
+          trueBypassRuleCount: 0,
+          partialBypassRuleCount: 0,
+          learnedBypassRuleCount: 0,
+          directOnlyRuleCount: 1,
+          unsupportedRuleCount: 0,
+          processDirectRuleCount: 1
+        },
+        warnings: ['Windows native bypass scaffold is not active.'],
+        evaluatedAt: 1710000000000
+      })
+    })
+
+    assert.equal(bundle.tun.nativeProcessBypassPlatformMode, 'windows_wfp_service')
+    assert.equal(bundle.tun.nativeProcessBypassNativeDataPlaneActive, false)
+    assert.ok(
+      bundle.support.statuses.some(
+        (status) => status.code === 'windows_native_bypass_prereq_blocked'
+      )
+    )
+  })
+
+  it('surfaces macOS native process bypass as fallback-only', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      rulePacks: [],
+      tun: createTunSupportSnapshot(true, undefined, undefined, undefined, undefined, undefined, {
+        platform: 'darwin',
+        tunEnabled: true,
+        nativeProcessBypass: {
+          enabled: true,
+          platform: 'darwin',
+          supportedOnPlatform: false,
+          active: false,
+          status: 'unsupported',
+          platformMode: 'macos_fallback_only',
+          nativeDataPlaneActive: false,
+          fallbackOnly: true,
+          fallbackReason: 'macos_native_process_bypass_unsupported',
+          requiresPrivileges: false,
+          requiresService: false,
+          diagnosticsReason: 'macos_native_process_bypass_unsupported',
+          diagnostics: ['macOS uses learned/address fallback only.'],
+          activeProcesses: []
+        },
+        rules: [
+          {
+            rule: 'PROCESS-NAME,Telegram,DIRECT',
+            ruleType: 'PROCESS-NAME',
+            value: 'Telegram',
+            target: 'DIRECT',
+            effectiveBypassMode: 'direct_only',
+            platformSupport: 'unsupported',
+            requiresPrivileges: false,
+            requiresNativeBypass: true,
+            diagnosticsReason: 'native_process_bypass_unsupported',
+            diagnosticsMessage: 'macOS native process bypass is fallback-only.'
+          }
+        ],
+        summary: {
+          trueBypassRuleCount: 0,
+          partialBypassRuleCount: 0,
+          learnedBypassRuleCount: 0,
+          directOnlyRuleCount: 1,
+          unsupportedRuleCount: 0,
+          processDirectRuleCount: 1
+        },
+        warnings: ['macOS native bypass is fallback-only.'],
+        evaluatedAt: 1710000000000
+      })
+    })
+
+    assert.equal(bundle.tun.nativeProcessBypassPlatformMode, 'macos_fallback_only')
+    assert.equal(bundle.tun.nativeProcessBypassFallbackOnly, true)
+    assert.ok(
+      bundle.support.statuses.some((status) => status.code === 'macos_native_bypass_fallback_only')
+    )
+  })
+
   it('adds a support warning when TUN domain helper rules are unlikely to match', () => {
     const rule = createAmneziaHelperRule({
       id: 'domain-rule',

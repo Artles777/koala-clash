@@ -13,8 +13,10 @@ import {
   buildLinuxNativeProcessBypassCommands,
   canUseNativeProcessBypass,
   detectLinuxNativeProcessBypassPrerequisites,
+  detectWindowsNativeProcessBypassPrerequisites,
   getLinuxNativeProcessBypassPlan,
   getNativeProcessBypassStatus,
+  getWindowsNativeProcessBypassPlan,
   reconcileNativeProcessBypass,
   startNativeProcessBypass,
   stopNativeProcessBypass,
@@ -133,6 +135,37 @@ describe('bypass capability model', () => {
     assert.equal(report.summary.learnedBypassRuleCount, 0)
   })
 
+  it('allows a future active Windows native adapter to take precedence over learned bypass', () => {
+    const report = evaluateBypassCapabilities({
+      config: {
+        tun: { enable: true },
+        rules: ['PROCESS-NAME,Telegram,DIRECT']
+      },
+      platform: 'win32',
+      nativeProcessBypass: nativeCapability({
+        enabled: true,
+        platform: 'win32',
+        supportedOnPlatform: true,
+        active: true,
+        status: 'active',
+        mechanism: 'windows-wfp-service',
+        platformMode: 'windows_wfp_service',
+        nativeDataPlaneActive: true,
+        requiresPrivileges: true,
+        requiresService: true,
+        diagnosticsReason: 'native_process_bypass_active',
+        diagnostics: [],
+        activeProcesses: ['Telegram']
+      }),
+      learnedProcessBypass: learnedResolution('learned_bypass'),
+      now: () => 1
+    })
+
+    assert.equal(report.rules[0].effectiveBypassMode, 'true_bypass')
+    assert.equal(report.summary.trueBypassRuleCount, 1)
+    assert.equal(report.summary.learnedBypassRuleCount, 0)
+  })
+
   it('falls back to learned bypass when native process bypass is unavailable', () => {
     const report = evaluateBypassCapabilities({
       config: {
@@ -175,6 +208,113 @@ describe('Linux native process bypass MVP', () => {
     assert.equal(capability.supportedOnPlatform, false)
     assert.equal(capability.status, 'unsupported')
     assert.equal(capability.active, false)
+    assert.equal(capability.platformMode, 'macos_fallback_only')
+    assert.equal(capability.fallbackOnly, true)
+  })
+
+  it('reports Windows native bypass as scaffolded but not active', () => {
+    const capability = canUseNativeProcessBypass({ enabled: true, platform: 'win32' })
+
+    assert.equal(capability.supportedOnPlatform, true)
+    assert.equal(capability.status, 'available')
+    assert.equal(capability.active, false)
+    assert.equal(capability.mechanism, 'windows-wfp-service')
+    assert.equal(capability.platformMode, 'windows_wfp_service')
+    assert.equal(capability.nativeDataPlaneActive, false)
+    assert.equal(capability.diagnosticsReason, 'windows_wfp_service_pending_apply')
+  })
+
+  it('detects missing Windows native bypass prerequisites without claiming true bypass', async () => {
+    const executor = createMockExecutor({ availableCommands: [] })
+    const prerequisites = await detectWindowsNativeProcessBypassPrerequisites({
+      enabled: true,
+      platform: 'win32',
+      executor
+    })
+
+    assert.equal(prerequisites.status, 'windows_service_missing')
+    assert.equal(prerequisites.dataPlaneImplemented, false)
+    assert.equal(prerequisites.controllerAvailable, false)
+    assert.ok(prerequisites.issues.some((issue) => issue.code === 'windows_admin_required'))
+    assert.ok(prerequisites.issues.some((issue) => issue.code === 'windows_wfp_service_missing'))
+    assert.ok(prerequisites.issues.some((issue) => issue.code === 'windows_controller_missing'))
+  })
+
+  it('keeps Windows native bypass blocked until the WFP service and controller exist', async () => {
+    const executor = createMockExecutor({ availableCommands: ['windows-admin'] })
+    const capability = await startNativeProcessBypass({
+      enabled: true,
+      platform: 'win32',
+      processNames: ['Telegram'],
+      executor
+    })
+
+    assert.equal(capability.status, 'blocked')
+    assert.equal(capability.active, false)
+    assert.equal(capability.mechanism, 'windows-wfp-service')
+    assert.equal(capability.diagnosticsReason, 'windows_service_missing')
+  })
+
+  it('applies Windows native bypass only when the WFP controller reports an active data plane', async () => {
+    const executor = createMockExecutor({
+      availableCommands: ['windows-admin', 'windows-service', 'windows-controller'],
+      windowsControllerActive: true
+    })
+
+    const capability = await startNativeProcessBypass({
+      enabled: true,
+      platform: 'win32',
+      processNames: ['Telegram'],
+      executor,
+      windowsSessionId: 'test-session'
+    })
+
+    assert.equal(capability.status, 'active')
+    assert.equal(capability.active, true)
+    assert.equal(capability.nativeDataPlaneActive, true)
+    assert.equal(capability.platformMode, 'windows_wfp_service')
+    assert.equal(capability.windowsServiceAvailable, true)
+    assert.equal(capability.windowsControllerAvailable, true)
+    assert.equal(capability.windowsSessionId, 'test-session')
+    assert.equal(capability.windowsAppliedProcessCount, 1)
+    assert.deepEqual(capability.activeProcesses, ['Telegram'])
+    assert.ok(
+      executor.calls.some(
+        (call) => call.command === 'koala-process-bypassctl.exe' && call.args[0] === 'apply'
+      )
+    )
+
+    const stopped = await stopNativeProcessBypass({
+      enabled: true,
+      platform: 'win32',
+      executor
+    })
+
+    assert.equal(stopped.active, false)
+    assert.ok(
+      executor.calls.some(
+        (call) => call.command === 'koala-process-bypassctl.exe' && call.args[0] === 'cleanup'
+      )
+    )
+  })
+
+  it('does not claim Windows true bypass when controller apply reports inactive data plane', async () => {
+    const executor = createMockExecutor({
+      availableCommands: ['windows-admin', 'windows-service', 'windows-controller'],
+      windowsControllerActive: false
+    })
+
+    const capability = await startNativeProcessBypass({
+      enabled: true,
+      platform: 'win32',
+      processNames: ['Telegram'],
+      executor
+    })
+
+    assert.equal(capability.status, 'blocked')
+    assert.equal(capability.active, false)
+    assert.equal(capability.nativeDataPlaneActive, false)
+    assert.equal(capability.diagnosticsReason, 'windows_data_plane_inactive')
   })
 
   it('reports Linux availability before privileged apply is attempted', () => {
@@ -356,6 +496,17 @@ describe('Linux native process bypass MVP', () => {
     assert.ok(plan.setupSteps.some((step) => step.includes('fwmark')))
   })
 
+  it('documents the Windows WFP service/controller apply contract', () => {
+    const plan = getWindowsNativeProcessBypassPlan()
+
+    assert.equal(plan.mechanism, 'windows-wfp-service')
+    assert.ok(plan.requiredCapabilities.includes('Windows Filtering Platform'))
+    assert.ok(plan.requiredCapabilities.includes('koala-process-bypassctl.exe controller'))
+    assert.ok(plan.setupSteps.some((step) => step.includes('WFP')))
+    assert.ok(plan.setupSteps.some((step) => step.includes('dataPlaneActive')))
+    assert.ok(plan.cleanupSteps.some((step) => step.includes('controller')))
+  })
+
   it('generates deterministic apply and cleanup commands', () => {
     const commands = buildLinuxNativeProcessBypassCommands()
 
@@ -374,6 +525,7 @@ describe('Linux native process bypass MVP', () => {
 function createMockExecutor(input: {
   availableCommands: string[]
   failNftApply?: boolean
+  windowsControllerActive?: boolean
 }): NativeProcessBypassExecutor & {
   calls: Array<{ command: string; args: string[]; stdin?: string }>
 } {
@@ -387,6 +539,48 @@ function createMockExecutor(input: {
         if (input.availableCommands.includes(checked))
           return { stdout: `/usr/bin/${checked}\n`, stderr: '' }
         throw new Error(`${checked} missing`)
+      }
+      if (command === 'net.exe' && args[0] === 'session') {
+        if (input.availableCommands.includes('windows-admin')) return { stdout: '', stderr: '' }
+        throw new Error('admin required')
+      }
+      if (command === 'powershell.exe') {
+        if (input.availableCommands.includes('windows-service')) return { stdout: '', stderr: '' }
+        throw new Error('service missing')
+      }
+      if (command === 'where.exe' && args[0] === 'koala-process-bypassctl.exe') {
+        if (input.availableCommands.includes('windows-controller')) {
+          return { stdout: 'C:\\Koala\\koala-process-bypassctl.exe\r\n', stderr: '' }
+        }
+        throw new Error('controller missing')
+      }
+      if (command === 'koala-process-bypassctl.exe') {
+        if (args[0] === 'cleanup') {
+          return {
+            stdout: JSON.stringify({ ok: true, dataPlaneActive: false, diagnostics: ['cleaned'] }),
+            stderr: ''
+          }
+        }
+        if (args[0] === 'apply' && input.windowsControllerActive) {
+          return {
+            stdout: JSON.stringify({
+              ok: true,
+              dataPlaneActive: true,
+              appliedProcessNames: ['Telegram'],
+              diagnostics: ['applied']
+            }),
+            stderr: ''
+          }
+        }
+        return {
+          stdout: JSON.stringify({
+            ok: false,
+            dataPlaneActive: false,
+            reasonCode: 'windows_data_plane_inactive',
+            message: 'inactive'
+          }),
+          stderr: ''
+        }
       }
       if (command === 'nft' && args[0] === 'delete') {
         throw new Error('table does not exist')

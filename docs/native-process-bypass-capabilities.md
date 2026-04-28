@@ -34,8 +34,10 @@ This is preferred over `iptables owner` as the primary design because owner matc
 The code now includes:
 
 - a cross-platform capability report,
-- a Linux native bypass adapter scaffold,
-- explicit unsupported/degraded states for macOS and Windows,
+- a Linux native bypass adapter with real cgroup/fwmark apply and cleanup,
+- a Windows native bypass service/controller contract for a WFP data plane,
+- an explicit macOS fallback-only classification,
+- explicit unsupported/degraded states for macOS and missing Windows prerequisites,
 - fallback precedence: native true bypass, then learned bypass, then direct-only,
 - support/debug fields for native capability and effective PROCESS-NAME mode.
 
@@ -70,9 +72,49 @@ The reconcile state is exposed in support/debug data:
 - last reconcile timestamp,
 - reconcile errors.
 
+## Windows Native WFP Service Path
+
+Windows is modeled as a WFP service/controller path. Koala does not implement WFP filtering
+inside the Electron process. Instead, it requires a privileged external data-plane component:
+
+- `KoalaProcessBypass` service,
+- `koala-process-bypassctl.exe` controller,
+- elevated/admin context.
+
+The current integration:
+
+- reports platform mode `windows_wfp_service`,
+- exposes the intended mechanism `windows-wfp-service`,
+- checks whether an elevated context is available with `net.exe session`,
+- checks whether `KoalaProcessBypass` service is installed,
+- checks whether `koala-process-bypassctl.exe` is available,
+- asks the controller to apply exact `PROCESS-NAME` WFP policy for the active runtime session,
+- reports `active` / `true_bypass` only when the controller returns `dataPlaneActive: true`.
+
+If the service/controller is missing, not elevated, or apply does not confirm an active data plane,
+Windows `PROCESS-NAME,DIRECT` falls back to learned process-to-IP bypass when available, otherwise
+it remains plain Mihomo DIRECT. This avoids claiming true native bypass without a real WFP data
+plane.
+
+Implementation sources live under `native/windows-process-bypass`. See
+`docs/windows-process-bypass-service.md` for build, install, and limitation details.
+
+## macOS Fallback-Only Mode
+
+macOS is explicitly classified as `macos_fallback_only`.
+
+The current architecture does not claim true native PROCESS-NAME bypass on macOS. `PROCESS-NAME,DIRECT` can still benefit from:
+
+- address-based DIRECT excludes for `DOMAIN`, `DOMAIN-SUFFIX`, and `IP-CIDR` rules,
+- learned process-to-IP bypass where observed destination IPs are available,
+- normal Mihomo DIRECT behavior when no runtime bypass exists.
+
+This avoids implying that process-name rules can exclude an app from TUN at the OS layer on macOS.
+
 ## Remaining Work
 
 - add a privileged Linux service/helper path so GUI launches do not need direct root/CAP_NET_ADMIN,
 - replace polling with a stronger platform event/service implementation if needed,
-- add cleanup/recovery for native routing state,
-- add Linux packaged smoke validation for true native process bypass.
+- implement/package/sign the Windows `KoalaProcessBypass` WFP service and controller,
+- run packaged cleanup/recovery smoke validation for native routing state,
+- add packaged smoke validation for Linux and Windows true native process bypass diagnostics.

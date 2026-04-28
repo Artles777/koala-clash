@@ -21,20 +21,39 @@ export type NativeProcessBypassStatus =
   | 'active'
   | 'blocked'
 
-export type NativeProcessBypassMechanism = 'linux-cgroup-fwmark'
+export type NativeProcessBypassMechanism = 'linux-cgroup-fwmark' | 'windows-wfp-service'
+export type NativeProcessBypassPlatformMode =
+  | 'linux_native'
+  | 'windows_wfp_service'
+  | 'windows_scaffold'
+  | 'macos_fallback_only'
+  | 'unsupported'
 export type LinuxNativeProcessBypassPrerequisiteStatus =
   | 'supported'
   | 'missing_prerequisites'
   | 'insufficient_privileges'
   | 'not_linux'
+  | 'not_windows'
   | 'partially_supported'
+  | 'windows_service_missing'
+  | 'implementation_pending'
+  | 'fallback_only'
 export type LinuxNativeProcessBypassIssueCode =
   | 'not_linux'
+  | 'not_windows'
   | 'cgroup_v2_missing'
   | 'nft_missing'
   | 'ip_missing'
   | 'insufficient_privileges'
   | 'cgroup_not_writable'
+  | 'windows_wfp_service_missing'
+  | 'windows_controller_missing'
+  | 'windows_admin_required'
+  | 'windows_data_plane_pending'
+  | 'windows_data_plane_inactive'
+  | 'windows_apply_failed'
+  | 'windows_cleanup_failed'
+  | 'macos_native_bypass_unsupported'
   | 'no_process_names'
   | 'no_matching_processes'
   | 'cgroup_creation_failed'
@@ -58,6 +77,10 @@ export interface NativeProcessBypassCapability {
   mechanism?: NativeProcessBypassMechanism
   requiresPrivileges: boolean
   requiresService: boolean
+  platformMode?: NativeProcessBypassPlatformMode
+  nativeDataPlaneActive?: boolean
+  fallbackOnly?: boolean
+  fallbackReason?: string
   diagnosticsReason: string
   diagnostics: string[]
   activeProcesses: string[]
@@ -71,6 +94,10 @@ export interface NativeProcessBypassCapability {
   reconcileActive?: boolean
   reconcileErrors?: string[]
   appliedAt?: number
+  windowsServiceAvailable?: boolean
+  windowsControllerAvailable?: boolean
+  windowsSessionId?: string
+  windowsAppliedProcessCount?: number
 }
 
 export interface RuleBypassCapability {

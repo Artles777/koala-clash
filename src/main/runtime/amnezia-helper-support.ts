@@ -88,6 +88,11 @@ export type AmneziaHelperSupportStatusCode =
   | 'native_process_bypass_active'
   | 'native_process_bypass_unsupported'
   | 'native_process_bypass_blocked'
+  | 'windows_native_bypass_scaffold'
+  | 'windows_native_bypass_prereq_blocked'
+  | 'windows_native_bypass_active'
+  | 'windows_native_bypass_apply_failed'
+  | 'macos_native_bypass_fallback_only'
   | 'udp_supported'
   | 'udp_tcp_only'
 
@@ -288,6 +293,10 @@ export interface AmneziaHelperTunSupportSnapshot {
   nativeProcessBypassRequiresService: boolean
   nativeProcessBypassStatus: NativeProcessBypassStatus
   nativeProcessBypassMechanism?: BypassCapabilityReport['nativeProcessBypass']['mechanism']
+  nativeProcessBypassPlatformMode?: BypassCapabilityReport['nativeProcessBypass']['platformMode']
+  nativeProcessBypassNativeDataPlaneActive: boolean
+  nativeProcessBypassFallbackOnly: boolean
+  nativeProcessBypassFallbackReason?: string
   nativeProcessBypassDiagnostics: string[]
   nativeProcessBypassPrerequisiteStatus?: BypassCapabilityReport['nativeProcessBypass']['prerequisiteStatus']
   nativeProcessBypassBoundPidCount: number
@@ -297,6 +306,10 @@ export interface AmneziaHelperTunSupportSnapshot {
   nativeProcessBypassLastReconcileAt?: number
   nativeProcessBypassReconcileActive: boolean
   nativeProcessBypassReconcileErrors: string[]
+  nativeProcessBypassWindowsServiceAvailable?: boolean
+  nativeProcessBypassWindowsControllerAvailable?: boolean
+  nativeProcessBypassWindowsSessionId?: string
+  nativeProcessBypassWindowsAppliedProcessCount?: number
   processDirectEffectiveBypassMode: EffectiveBypassMode
   bypassCapabilityWarnings: string[]
   bypassCapabilitySummary: BypassCapabilityReport['summary']
@@ -421,11 +434,18 @@ export interface AmneziaHelperSupportSummaryExport {
     | 'nativeProcessBypassSupportedOnPlatform'
     | 'nativeProcessBypassActive'
     | 'nativeProcessBypassStatus'
+    | 'nativeProcessBypassPlatformMode'
+    | 'nativeProcessBypassNativeDataPlaneActive'
+    | 'nativeProcessBypassFallbackOnly'
+    | 'nativeProcessBypassFallbackReason'
     | 'nativeProcessBypassTrackedPidCount'
     | 'nativeProcessBypassNewlyBoundPidCount'
     | 'nativeProcessBypassDeadPidCleanupCount'
     | 'nativeProcessBypassLastReconcileAt'
     | 'nativeProcessBypassReconcileActive'
+    | 'nativeProcessBypassWindowsServiceAvailable'
+    | 'nativeProcessBypassWindowsControllerAvailable'
+    | 'nativeProcessBypassWindowsAppliedProcessCount'
     | 'processDirectEffectiveBypassMode'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'
@@ -789,6 +809,11 @@ export function createTunSupportSnapshot(
       bypassCapabilities?.nativeProcessBypass.requiresService ?? false,
     nativeProcessBypassStatus: bypassCapabilities?.nativeProcessBypass.status ?? 'disabled',
     nativeProcessBypassMechanism: bypassCapabilities?.nativeProcessBypass.mechanism,
+    nativeProcessBypassPlatformMode: bypassCapabilities?.nativeProcessBypass.platformMode,
+    nativeProcessBypassNativeDataPlaneActive:
+      bypassCapabilities?.nativeProcessBypass.nativeDataPlaneActive ?? false,
+    nativeProcessBypassFallbackOnly: bypassCapabilities?.nativeProcessBypass.fallbackOnly ?? false,
+    nativeProcessBypassFallbackReason: bypassCapabilities?.nativeProcessBypass.fallbackReason,
     nativeProcessBypassDiagnostics:
       bypassCapabilities?.nativeProcessBypass.diagnostics.map((diagnostic) => diagnostic) ?? [],
     nativeProcessBypassPrerequisiteStatus:
@@ -806,6 +831,13 @@ export function createTunSupportSnapshot(
       bypassCapabilities?.nativeProcessBypass.reconcileActive ?? false,
     nativeProcessBypassReconcileErrors:
       bypassCapabilities?.nativeProcessBypass.reconcileErrors?.map((error) => error) ?? [],
+    nativeProcessBypassWindowsServiceAvailable:
+      bypassCapabilities?.nativeProcessBypass.windowsServiceAvailable,
+    nativeProcessBypassWindowsControllerAvailable:
+      bypassCapabilities?.nativeProcessBypass.windowsControllerAvailable,
+    nativeProcessBypassWindowsSessionId: bypassCapabilities?.nativeProcessBypass.windowsSessionId,
+    nativeProcessBypassWindowsAppliedProcessCount:
+      bypassCapabilities?.nativeProcessBypass.windowsAppliedProcessCount,
     processDirectEffectiveBypassMode: getProcessDirectEffectiveBypassMode(bypassCapabilities),
     bypassCapabilityWarnings: bypassCapabilities?.warnings.map((warning) => warning) ?? [],
     bypassCapabilitySummary: bypassCapabilities?.summary ?? {
@@ -1199,7 +1231,27 @@ function collectRecommendedActions(
     add(
       'inspect_native_process_bypass',
       'warning',
-      'Native process bypass is Linux-first and still requires privileged cgroup/fwmark integration before it can replace learned bypass.'
+      'Native process bypass requires platform-specific privileged support before it can replace learned bypass.'
+    )
+  }
+  if (
+    hasAny(codes, [
+      'windows_native_bypass_scaffold',
+      'windows_native_bypass_prereq_blocked',
+      'windows_native_bypass_apply_failed'
+    ])
+  ) {
+    add(
+      'prepare_windows_wfp_service',
+      'warning',
+      'Windows PROCESS-NAME native bypass needs the signed WFP helper service and controller; use learned or address-based DIRECT bypass until that data plane is active.'
+    )
+  }
+  if (codes.has('macos_native_bypass_fallback_only')) {
+    add(
+      'use_macos_fallback_bypass',
+      'warning',
+      'macOS PROCESS-NAME DIRECT is fallback-only; prefer DOMAIN/IP-CIDR DIRECT excludes or learned process-to-IP bypass.'
     )
   }
   if (codes.has('stability_not_validated')) {
@@ -1231,6 +1283,7 @@ function sourceForStatusCode(
   if (code.startsWith('direct_tun_') || code.startsWith('direct_process_')) return 'tun'
   if (code.startsWith('learned_process_')) return 'tun'
   if (code.startsWith('native_process_')) return 'tun'
+  if (code.startsWith('windows_native_') || code.startsWith('macos_native_')) return 'tun'
   if (code.startsWith('udp_')) return 'udp'
   if (code.includes('routing') || code.includes('rules')) return 'helper'
   if (code.includes('helper') || code.includes('backend') || code.includes('startup')) {
@@ -1334,11 +1387,21 @@ function createSupportSummaryExport(input: {
       nativeProcessBypassSupportedOnPlatform: input.tun.nativeProcessBypassSupportedOnPlatform,
       nativeProcessBypassActive: input.tun.nativeProcessBypassActive,
       nativeProcessBypassStatus: input.tun.nativeProcessBypassStatus,
+      nativeProcessBypassPlatformMode: input.tun.nativeProcessBypassPlatformMode,
+      nativeProcessBypassNativeDataPlaneActive: input.tun.nativeProcessBypassNativeDataPlaneActive,
+      nativeProcessBypassFallbackOnly: input.tun.nativeProcessBypassFallbackOnly,
+      nativeProcessBypassFallbackReason: input.tun.nativeProcessBypassFallbackReason,
       nativeProcessBypassTrackedPidCount: input.tun.nativeProcessBypassTrackedPidCount,
       nativeProcessBypassNewlyBoundPidCount: input.tun.nativeProcessBypassNewlyBoundPidCount,
       nativeProcessBypassDeadPidCleanupCount: input.tun.nativeProcessBypassDeadPidCleanupCount,
       nativeProcessBypassLastReconcileAt: input.tun.nativeProcessBypassLastReconcileAt,
       nativeProcessBypassReconcileActive: input.tun.nativeProcessBypassReconcileActive,
+      nativeProcessBypassWindowsServiceAvailable:
+        input.tun.nativeProcessBypassWindowsServiceAvailable,
+      nativeProcessBypassWindowsControllerAvailable:
+        input.tun.nativeProcessBypassWindowsControllerAvailable,
+      nativeProcessBypassWindowsAppliedProcessCount:
+        input.tun.nativeProcessBypassWindowsAppliedProcessCount,
       processDirectEffectiveBypassMode: input.tun.processDirectEffectiveBypassMode,
       helperRuleReliability: input.tun.helperRuleReliability,
       helperRuleReliabilityReason: input.tun.helperRuleReliabilityReason
@@ -1590,7 +1653,29 @@ function collectSupportStatuses(input: CreateSupportSummaryInput): AmneziaHelper
   }
 
   if (tun.enabled && tun.bypassCapabilitySummary.processDirectRuleCount > 0) {
-    if (tun.nativeProcessBypassActive) {
+    if (
+      tun.nativeProcessBypassPlatformMode === 'windows_wfp_service' ||
+      tun.nativeProcessBypassPlatformMode === 'windows_scaffold'
+    ) {
+      if (tun.nativeProcessBypassActive && tun.nativeProcessBypassNativeDataPlaneActive) {
+        statuses.push(createStatus('windows_native_bypass_active'))
+      } else if (
+        tun.nativeProcessBypassStatus === 'blocked' &&
+        tun.nativeProcessBypassDiagnostics.some(
+          (diagnostic) =>
+            diagnostic.includes('windows_apply_failed') ||
+            diagnostic.includes('windows_data_plane_inactive')
+        )
+      ) {
+        statuses.push(createStatus('windows_native_bypass_apply_failed'))
+      } else if (tun.nativeProcessBypassStatus === 'blocked') {
+        statuses.push(createStatus('windows_native_bypass_prereq_blocked'))
+      } else {
+        statuses.push(createStatus('windows_native_bypass_scaffold'))
+      }
+    } else if (tun.nativeProcessBypassPlatformMode === 'macos_fallback_only') {
+      statuses.push(createStatus('macos_native_bypass_fallback_only'))
+    } else if (tun.nativeProcessBypassActive) {
       statuses.push(createStatus('native_process_bypass_active'))
     } else if (tun.nativeProcessBypassEnabled && tun.nativeProcessBypassStatus === 'available') {
       statuses.push(createStatus('native_process_bypass_available'))
@@ -1934,9 +2019,8 @@ const statusDefinitions: Record<
   },
   native_process_bypass_available: {
     severity: 'warning',
-    title: 'Native process bypass scaffold available',
-    message:
-      'Linux native process bypass capability is detected, but privileged activation is not implemented yet.'
+    title: 'Native process bypass available',
+    message: 'Native process bypass capability is detected, but it is not active yet.'
   },
   native_process_bypass_active: {
     severity: 'info',
@@ -1954,6 +2038,35 @@ const statusDefinitions: Record<
     title: 'Native process bypass blocked',
     message:
       'Native process bypass was requested, but privileged Linux cgroup/fwmark setup is not active.'
+  },
+  windows_native_bypass_scaffold: {
+    severity: 'warning',
+    title: 'Windows native bypass available',
+    message:
+      'Windows PROCESS-NAME native bypass needs the WFP service/controller to apply its data plane before it becomes true bypass.'
+  },
+  windows_native_bypass_prereq_blocked: {
+    severity: 'warning',
+    title: 'Windows native bypass prerequisites missing',
+    message:
+      'Windows PROCESS-NAME native bypass needs elevation, KoalaProcessBypass service, and koala-process-bypassctl controller before it can become true bypass.'
+  },
+  windows_native_bypass_active: {
+    severity: 'info',
+    title: 'Windows native bypass active',
+    message: 'The Windows WFP helper service reported an active process-aware bypass data plane.'
+  },
+  windows_native_bypass_apply_failed: {
+    severity: 'warning',
+    title: 'Windows native bypass apply failed',
+    message:
+      'The Windows WFP helper service/controller was found, but it did not confirm an active bypass data plane.'
+  },
+  macos_native_bypass_fallback_only: {
+    severity: 'warning',
+    title: 'macOS native bypass fallback-only',
+    message:
+      'macOS PROCESS-NAME DIRECT does not have a true native bypass path in this architecture; address-based and learned bypass are used as fallback.'
   },
   udp_supported: {
     severity: 'info',

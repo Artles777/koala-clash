@@ -1151,8 +1151,42 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                     value={supportSnapshot?.tun.nativeProcessBypassStatus ?? '-'}
                   />
                   <RuntimeRow
+                    label={t('profile.nativeProcessBypassPlatform')}
+                    value={supportSnapshot?.tun.nativeProcessBypassPlatformMode ?? '-'}
+                  />
+                  <RuntimeRow
                     label={t('profile.nativeProcessBypassPrerequisites')}
                     value={supportSnapshot?.tun.nativeProcessBypassPrerequisiteStatus ?? '-'}
+                  />
+                  {supportSnapshot?.tun.nativeProcessBypassPlatformMode === 'windows_wfp_service' ||
+                  supportSnapshot?.tun.nativeProcessBypassPlatformMode === 'windows_scaffold' ? (
+                    <>
+                      <RuntimeRow
+                        label={t('profile.nativeProcessBypassWindowsService')}
+                        value={
+                          supportSnapshot?.tun.nativeProcessBypassWindowsServiceAvailable
+                            ? t('profile.tunBypassActive')
+                            : t('profile.tunBypassInactive')
+                        }
+                      />
+                      <RuntimeRow
+                        label={t('profile.nativeProcessBypassWindowsController')}
+                        value={
+                          supportSnapshot?.tun.nativeProcessBypassWindowsControllerAvailable
+                            ? t('profile.tunBypassActive')
+                            : t('profile.tunBypassInactive')
+                        }
+                      />
+                    </>
+                  ) : null}
+                  <RuntimeRow
+                    label={t('profile.nativeProcessBypassFallback')}
+                    value={
+                      supportSnapshot?.tun.nativeProcessBypassFallbackReason ??
+                      (supportSnapshot?.tun.nativeProcessBypassFallbackOnly
+                        ? t('profile.tunBypassActive')
+                        : t('profile.tunBypassInactive'))
+                    }
                   />
                   <RuntimeRow
                     label={t('profile.nativeProcessBypassPids')}

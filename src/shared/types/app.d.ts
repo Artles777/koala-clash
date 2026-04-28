@@ -667,12 +667,22 @@ type EffectiveBypassMode =
   | 'direct_only'
   | 'unsupported'
 type NativeProcessBypassStatus = 'disabled' | 'unsupported' | 'available' | 'active' | 'blocked'
+type NativeProcessBypassPlatformMode =
+  | 'linux_native'
+  | 'windows_wfp_service'
+  | 'windows_scaffold'
+  | 'macos_fallback_only'
+  | 'unsupported'
 type LinuxNativeProcessBypassPrerequisiteStatus =
   | 'supported'
   | 'missing_prerequisites'
   | 'insufficient_privileges'
   | 'not_linux'
+  | 'not_windows'
   | 'partially_supported'
+  | 'windows_service_missing'
+  | 'implementation_pending'
+  | 'fallback_only'
 type AmneziaHelperTunDnsEnhancedMode = 'fake-ip' | 'redir-host' | 'normal' | 'unknown'
 type AmneziaHelperRuleReliability = 'reliable' | 'degraded' | 'unlikely' | 'blocked'
 type AmneziaHelperRuleReliabilityReason =
@@ -729,6 +739,11 @@ type AmneziaHelperSupportStatusCode =
   | 'native_process_bypass_active'
   | 'native_process_bypass_unsupported'
   | 'native_process_bypass_blocked'
+  | 'windows_native_bypass_scaffold'
+  | 'windows_native_bypass_prereq_blocked'
+  | 'windows_native_bypass_active'
+  | 'windows_native_bypass_apply_failed'
+  | 'macos_native_bypass_fallback_only'
   | 'udp_supported'
   | 'udp_tcp_only'
 
@@ -938,7 +953,11 @@ interface AmneziaHelperTunSupportSnapshot {
   nativeProcessBypassRequiresPrivileges: boolean
   nativeProcessBypassRequiresService: boolean
   nativeProcessBypassStatus: NativeProcessBypassStatus
-  nativeProcessBypassMechanism?: 'linux-cgroup-fwmark'
+  nativeProcessBypassMechanism?: 'linux-cgroup-fwmark' | 'windows-wfp-service'
+  nativeProcessBypassPlatformMode?: NativeProcessBypassPlatformMode
+  nativeProcessBypassNativeDataPlaneActive: boolean
+  nativeProcessBypassFallbackOnly: boolean
+  nativeProcessBypassFallbackReason?: string
   nativeProcessBypassDiagnostics: string[]
   nativeProcessBypassPrerequisiteStatus?: LinuxNativeProcessBypassPrerequisiteStatus
   nativeProcessBypassBoundPidCount: number
@@ -948,6 +967,10 @@ interface AmneziaHelperTunSupportSnapshot {
   nativeProcessBypassLastReconcileAt?: number
   nativeProcessBypassReconcileActive: boolean
   nativeProcessBypassReconcileErrors: string[]
+  nativeProcessBypassWindowsServiceAvailable?: boolean
+  nativeProcessBypassWindowsControllerAvailable?: boolean
+  nativeProcessBypassWindowsSessionId?: string
+  nativeProcessBypassWindowsAppliedProcessCount?: number
   processDirectEffectiveBypassMode: EffectiveBypassMode
   bypassCapabilityWarnings: string[]
   bypassCapabilitySummary: {
@@ -1051,11 +1074,18 @@ interface AmneziaHelperSupportSummaryExport {
     | 'nativeProcessBypassSupportedOnPlatform'
     | 'nativeProcessBypassActive'
     | 'nativeProcessBypassStatus'
+    | 'nativeProcessBypassPlatformMode'
+    | 'nativeProcessBypassNativeDataPlaneActive'
+    | 'nativeProcessBypassFallbackOnly'
+    | 'nativeProcessBypassFallbackReason'
     | 'nativeProcessBypassTrackedPidCount'
     | 'nativeProcessBypassNewlyBoundPidCount'
     | 'nativeProcessBypassDeadPidCleanupCount'
     | 'nativeProcessBypassLastReconcileAt'
     | 'nativeProcessBypassReconcileActive'
+    | 'nativeProcessBypassWindowsServiceAvailable'
+    | 'nativeProcessBypassWindowsControllerAvailable'
+    | 'nativeProcessBypassWindowsAppliedProcessCount'
     | 'processDirectEffectiveBypassMode'
     | 'helperRuleReliability'
     | 'helperRuleReliabilityReason'
