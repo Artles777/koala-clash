@@ -40,6 +40,7 @@ import { disableSysProxy, triggerSysProxy } from '../sys/sysproxy'
 import { getAxios } from './mihomoApi'
 import { setSysDns } from '../service/api'
 import { t } from '../utils/i18n'
+import { clearActiveMihomoIpcPath, setActiveMihomoIpcPath } from './mihomoIpcState'
 
 const ctlParam = process.platform === 'win32' ? '-ext-ctl-pipe' : '-ext-ctl-unix'
 
@@ -139,20 +140,23 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
     SAFE_PATHS: safePaths.join(path.delimiter),
     PATH: process.env.PATH
   }
+  const ipcPath = mihomoIpcPath()
   child = spawn(
     corePath,
-    [
-      '-d',
-      diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir(),
-      ctlParam,
-      mihomoIpcPath()
-    ],
+    ['-d', diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir(), ctlParam, ipcPath],
     {
       detached: detached,
       stdio: detached ? 'ignore' : undefined,
       env: env
     }
   )
+  const childPid = child.pid
+  if (childPid) {
+    await writeFile(path.join(dataDir(), 'core.pid'), childPid.toString()).catch(async (error) => {
+      await writeFile(logPath(), `[Manager]: write core pid failed, ${error}\n`, { flag: 'a' })
+    })
+  }
+  setActiveMihomoIpcPath(ipcPath)
   if (process.platform === 'win32' && child.pid) {
     os.setPriority(child.pid, os.constants.priority[mihomoCpuPriority])
   }
@@ -163,6 +167,8 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
     })
   }
   child.on('close', async (code, signal) => {
+    clearActiveMihomoIpcPath(ipcPath)
+    await removeCorePidIfMatches(childPid)
     await writeFile(logPath(), `[Manager]: Core closed, code: ${code}, signal: ${signal}\n`, {
       flag: 'a'
     })
@@ -301,6 +307,7 @@ export async function stopCore(force = false): Promise<void> {
     await stopChildProcess(child)
     child = undefined as unknown as ChildProcess
   }
+  clearActiveMihomoIpcPath()
 
   await getAxios(true).catch(() => {})
 
@@ -323,6 +330,20 @@ export async function stopCore(force = false): Promise<void> {
       }
     }
     await rm(path.join(dataDir(), 'core.pid')).catch(() => {})
+  }
+}
+
+async function removeCorePidIfMatches(pid: number | undefined): Promise<void> {
+  if (!pid) return
+  const pidPath = path.join(dataDir(), 'core.pid')
+  if (!existsSync(pidPath)) return
+  try {
+    const pidString = await readFile(pidPath, 'utf-8')
+    if (parseInt(pidString.trim()) === pid) {
+      await rm(pidPath, { force: true })
+    }
+  } catch {
+    // ignore stale or unreadable pid files
   }
 }
 

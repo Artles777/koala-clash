@@ -43,6 +43,9 @@ mac:
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  signIgnore:
+    - Contents/Resources/sidecar/mihomo$
+    - Contents/Resources/sidecar/mihomo-alpha$
   notarize: false
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
