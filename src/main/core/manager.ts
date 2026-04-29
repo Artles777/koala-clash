@@ -41,6 +41,7 @@ import { getAxios } from './mihomoApi'
 import { setSysDns } from '../service/api'
 import { t } from '../utils/i18n'
 import { clearActiveMihomoIpcPath, setActiveMihomoIpcPath } from './mihomoIpcState'
+import { execWithElevation } from '../utils/elevation'
 
 const ctlParam = process.platform === 'win32' ? '-ext-ctl-pipe' : '-ext-ctl-unix'
 
@@ -507,16 +508,20 @@ export async function manualGrantCorePermition(
     const corePath = mihomoCorePath(coreName)
     try {
       if (process.platform === 'darwin') {
-        const escapedPath = corePath.replace(/"/g, '\\"')
-        const shell = `chown root:admin \\"${escapedPath}\\" && chmod +sx \\"${escapedPath}\\"`
-        const command = `do shell script "${shell}" with administrator privileges`
-        await execFilePromise('osascript', ['-e', command])
+        await execWithElevation('/bin/sh', [
+          '-c',
+          'chown root:admin "$1" && chmod +sx "$1"',
+          'koala-core-permission',
+          corePath
+        ])
       }
       if (process.platform === 'linux') {
         await execFilePromise('pkexec', [
           'bash',
           '-c',
-          `chown root:root "${corePath}" && chmod +sx "${corePath}"`
+          'chown root:root "$1" && chmod +sx "$1"',
+          'koala-core-permission',
+          corePath
         ])
       }
     } catch (error) {
