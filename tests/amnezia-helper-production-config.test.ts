@@ -31,7 +31,7 @@ describe('Amnezia production helper config generation', () => {
     assert.equal(config.localProxy.listenHost, '127.0.0.1')
     assert.equal(config.localProxy.listenPort, 19080)
     assert.deepEqual(config.localProxy.protocols, ['socks5'])
-    assert.equal(config.localProxy.udp, false)
+    assert.equal(config.localProxy.udp, true)
   })
 
   it('rejects missing local proxy, allowed IPs, and interface addresses', () => {

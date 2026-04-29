@@ -64,7 +64,7 @@ export interface AmneziaProductionBackendConfig {
     listenHost: string
     listenPort: number
     protocols: AmneziaHelperProxyProtocol[]
-    udp: false
+    udp: boolean
   }
   diagnostics?: {
     logLevel?: string
@@ -237,7 +237,7 @@ export function createAmneziaProductionBackendConfig(
       listenHost: config.localProxy.host,
       listenPort: config.localProxy.port,
       protocols: ['socks5'],
-      udp: false
+      udp: true
     },
     diagnostics: {
       logLevel: 'info'

@@ -4,7 +4,13 @@ Phase 19 makes AMNEZIA_HELPER UDP support explicit instead of assuming it.
 
 ## What Is Known
 
-The helper path exposes a local SOCKS5 proxy endpoint. Before this phase, the generated Mihomo runtime outbound always included `udp: true` for `AMNEZIA_HELPER_PROXY`.
+The helper path exposes a local SOCKS5 proxy endpoint. `amnezia-helper`
+`0.4.0-udp-associate` implements SOCKS5 UDP ASSOCIATE and relays UDP through
+the userspace AmneziaWG/WireGuard netstack. Koala still does not assume UDP is
+usable until the running helper endpoint validates successfully.
+
+Before Phase 19, the generated Mihomo runtime outbound always included
+`udp: true` for `AMNEZIA_HELPER_PROXY`.
 
 That was too optimistic because the existing validation flow only checked:
 
@@ -42,7 +48,15 @@ proxies:
 
 The current UDP validation performs a SOCKS5 `UDP ASSOCIATE` check against the helper local proxy endpoint.
 
-This proves that the local helper proxy accepts SOCKS5 UDP association. It does not yet prove end-to-end UDP traffic through the Amnezia upstream server.
+This proves that the local helper proxy accepts SOCKS5 UDP association. With
+helper `0.4.0-udp-associate`, accepted associations are backed by the userspace
+UDP relay. Full application-level UDP quality, such as Discord voice stability,
+still needs real traffic validation against the selected server.
+
+For production helper sessions, Koala now runs this validation automatically
+when the helper local proxy becomes ready. A successful validation republishes
+the transient helper routing target and hot-reloads Mihomo so
+`AMNEZIA_HELPER_PROXY` can advertise `udp: true`.
 
 ## Diagnostics
 
@@ -59,7 +73,7 @@ Common reason codes:
 
 ## Remaining Work
 
-- End-to-end UDP datagram validation through the helper.
+- Dedicated end-to-end UDP datagram validation through the helper.
 - Backend manifest or self-check capability declaration.
 - Long-running UDP stability checks under TUN.
 - Platform smoke results with real production helper binaries.

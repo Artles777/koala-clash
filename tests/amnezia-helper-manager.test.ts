@@ -21,6 +21,8 @@ import {
   AmneziaHelperTunBypassResolution,
   createAmneziaHelperTunBypassFailed
 } from '../src/core/routing/amnezia-helper-tun-bypass'
+import { createAmneziaHelperUdpCapability } from '../src/core/routing/amnezia-helper-udp-capability'
+import { ValidateAmneziaHelperUdpCapabilityInput } from '../src/main/runtime/amnezia-helper-udp-validation'
 import { getExecutionPlan } from '../src/core/profiles/desktop-runtime-adapter'
 import { NormalizedProfile } from '../src/core/profiles/normalized-profile'
 
@@ -263,6 +265,43 @@ describe('Amnezia helper manager', () => {
     assert.ok(routingUpdates.some((session) => session.routingTarget?.status === 'injected'))
   })
 
+  it('auto-validates production helper UDP capability when the local proxy becomes ready', async () => {
+    const helperPath = await createExecutable('amnezia-helper')
+    const routingUpdates: AmneziaHelperSession[] = []
+    const udpValidationInputs: ValidateAmneziaHelperUdpCapabilityInput[] = []
+    const { manager } = await createManager({
+      backendMode: 'production',
+      productionBackendPath: helperPath,
+      spawnProcess: createJsonlProductionSpawn([proxyListeningEvent()]),
+      validateUdpCapability: async (input) => {
+        udpValidationInputs.push(input)
+        return createAmneziaHelperUdpCapability(
+          'supported',
+          true,
+          'udp_associate_validated',
+          1710000000000
+        )
+      },
+      syncRoutingState: (session) => {
+        routingUpdates.push(session)
+      }
+    })
+
+    await manager.start('amnezia-1')
+    const ready = await waitForUdpValidation(manager, 'amnezia-1')
+
+    assert.equal(udpValidationInputs.length, 1)
+    assert.equal(udpValidationInputs[0].endpoint.port, ready.localEndpoint?.port)
+    assert.equal(ready.udpCapability.udpSupport, 'supported')
+    assert.equal(ready.udpCapability.udpValidated, true)
+    assert.ok(
+      routingUpdates.some(
+        (session) =>
+          session.routingTarget?.udpCapability?.udpReasonCode === 'udp_associate_validated'
+      )
+    )
+  })
+
   it('auto-starts a managed helper for a supported active VPN profile', async () => {
     const helperPath = await createExecutable('amnezia-helper')
     const { manager } = await createManager({
@@ -425,6 +464,9 @@ async function createManager(
     validateConnectivity?: (
       input: ValidateAmneziaHelperConnectivityInput
     ) => Promise<AmneziaHelperConnectivityResult>
+    validateUdpCapability?: (
+      input: ValidateAmneziaHelperUdpCapabilityInput
+    ) => Promise<ReturnType<typeof createAmneziaHelperUdpCapability>>
     syncRoutingState?: (session: AmneziaHelperSession) => Promise<void> | void
     isTunEnabled?: () => Promise<boolean> | boolean
     maxRestartAttempts?: number
@@ -450,6 +492,7 @@ async function createManager(
     spawnProcess: input.spawnProcess,
     env: input.env,
     validateConnectivity: input.validateConnectivity,
+    validateUdpCapability: input.validateUdpCapability,
     syncRoutingState: input.syncRoutingState,
     isTunEnabled: input.isTunEnabled,
     maxRestartAttempts: input.maxRestartAttempts,
@@ -704,6 +747,21 @@ async function waitForLog(
   }
 
   assert.fail(`Timed out waiting for log: ${pattern}`)
+}
+
+async function waitForUdpValidation(
+  manager: AmneziaHelperManager,
+  profileId: string,
+  timeoutMs = 3000
+) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const session = manager.getStatus(profileId)
+    if (session.udpCapability.udpValidated) return session
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+
+  assert.fail('Timed out waiting for UDP capability validation')
 }
 
 function createNormalizedProfile(profileId: string): NormalizedProfile {

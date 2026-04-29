@@ -118,9 +118,13 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
     throw error
   }
 
+  const launchWorkDir = diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir()
+  const ipcPath = mihomoIpcPath()
+
   await generateProfile()
   await checkProfile()
   await stopCore()
+  await stopConflictingCoreProcesses(launchWorkDir, ipcPath)
   if (tun?.enable && autoSetDNSMode !== 'none') {
     try {
       await setPublicDNS()
@@ -141,16 +145,11 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
     SAFE_PATHS: safePaths.join(path.delimiter),
     PATH: process.env.PATH
   }
-  const ipcPath = mihomoIpcPath()
-  child = spawn(
-    corePath,
-    ['-d', diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir(), ctlParam, ipcPath],
-    {
-      detached: detached,
-      stdio: detached ? 'ignore' : undefined,
-      env: env
-    }
-  )
+  child = spawn(corePath, ['-d', launchWorkDir, ctlParam, ipcPath], {
+    detached: detached,
+    stdio: detached ? 'ignore' : undefined,
+    env: env
+  })
   const childPid = child.pid
   if (childPid) {
     await writeFile(path.join(dataDir(), 'core.pid'), childPid.toString()).catch(async (error) => {
@@ -332,6 +331,74 @@ export async function stopCore(force = false): Promise<void> {
     }
     await rm(path.join(dataDir(), 'core.pid')).catch(() => {})
   }
+}
+
+async function stopConflictingCoreProcesses(workDir: string, ipcPath: string): Promise<void> {
+  if (process.platform === 'win32') return
+
+  const execFilePromise = promisify(execFile)
+
+  try {
+    const { stdout } = await execFilePromise('ps', ['-axo', 'pid=,command='])
+    const candidates = stdout
+      .split('\n')
+      .map((line) => {
+        const match = line.match(/^\s*(\d+)\s+(.+)$/)
+        if (!match) return null
+        return { pid: Number(match[1]), command: match[2] }
+      })
+      .filter((entry): entry is { pid: number; command: string } => {
+        if (!entry || entry.pid === process.pid || entry.pid === child?.pid) return false
+        const isMihomo = /(?:^|\/)mihomo(?:-alpha)?(?:\s|$)/.test(entry.command)
+        return (
+          isMihomo && entry.command.includes(`-d ${workDir}`) && entry.command.includes(ipcPath)
+        )
+      })
+
+    for (const candidate of candidates) {
+      await writeFile(
+        logPath(),
+        `[Manager]: Stopping conflicting Mihomo process ${candidate.pid}: ${candidate.command}\n`,
+        { flag: 'a' }
+      )
+      await stopProcessByPid(candidate.pid)
+    }
+  } catch (error) {
+    await writeFile(logPath(), `[Manager]: conflicting core cleanup failed, ${error}\n`, {
+      flag: 'a'
+    })
+  }
+}
+
+async function stopProcessByPid(pid: number): Promise<void> {
+  const signal = async (value: NodeJS.Signals): Promise<boolean> => {
+    try {
+      process.kill(pid, value)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  if (!(await signal('SIGINT'))) return
+  await new Promise((resolve) => setTimeout(resolve, 500))
+
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return
+  }
+
+  await signal('SIGTERM')
+  await new Promise((resolve) => setTimeout(resolve, 1000))
+
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return
+  }
+
+  await signal('SIGKILL')
 }
 
 async function removeCorePidIfMatches(pid: number | undefined): Promise<void> {

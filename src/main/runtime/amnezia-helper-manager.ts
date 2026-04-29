@@ -207,6 +207,7 @@ export class AmneziaHelperManager {
   private readonly syncTunBypassState: (
     resolution: AmneziaHelperTunBypassResolution | undefined
   ) => Promise<void> | void
+  private readonly udpCapabilityValidationInFlight = new Set<string>()
 
   constructor(dependencies: AmneziaHelperManagerDependencies) {
     this.loadExecutionPlan = dependencies.loadExecutionPlan
@@ -781,6 +782,7 @@ export class AmneziaHelperManager {
       if (activeStatuses.has(entry.session.status)) {
         entry.session.readiness = 'ready'
         void this.publishRoutingState(entry)
+        void this.validateUdpCapabilityWhenReady(entry)
       }
     }
     if (backendDiagnostic && isBackendRuntimeFailureDiagnostic(backendDiagnostic.kind)) {
@@ -1217,12 +1219,20 @@ export class AmneziaHelperManager {
     entry: AmneziaHelperEntry,
     endpoint: AmneziaHelperLocalEndpoint
   ): Promise<void> {
+    const sessionId = entry.session.sessionId
     this.appendLog(entry, 'manager', 'UDP capability validation started')
     const capability = await this.validateUdpCapabilityImpl({
       profileId: entry.session.profileId,
       endpoint,
       now: this.now
     })
+    if (
+      this.sessions.get(entry.session.profileId) !== entry ||
+      entry.session.sessionId !== sessionId ||
+      !activeStatuses.has(entry.session.status)
+    ) {
+      return
+    }
     entry.session.udpCapability = capability
     this.appendLog(
       entry,
@@ -1230,6 +1240,35 @@ export class AmneziaHelperManager {
       `UDP capability ${capability.udpSupport} reason=${capability.udpReasonCode}`
     )
     await this.publishRoutingState(entry)
+  }
+
+  private async validateUdpCapabilityWhenReady(entry: AmneziaHelperEntry): Promise<void> {
+    if (entry.session.backendMode !== 'production') return
+    if (!entry.session.localEndpoint) return
+    if (entry.session.udpCapability.udpValidated) return
+    if (entry.session.udpCapability.udpReasonCode === 'udp_associate_rejected') return
+
+    const sessionId = entry.session.sessionId
+    if (this.udpCapabilityValidationInFlight.has(sessionId)) return
+    this.udpCapabilityValidationInFlight.add(sessionId)
+
+    try {
+      await this.validateAndPublishUdpCapability(entry, entry.session.localEndpoint)
+    } catch (error) {
+      if (
+        this.sessions.get(entry.session.profileId) === entry &&
+        entry.session.sessionId === sessionId &&
+        activeStatuses.has(entry.session.status)
+      ) {
+        const message =
+          error instanceof Error ? error.message : `UDP capability validation failed: ${error}`
+        this.appendLog(entry, 'manager', message)
+        this.pushRuntimeDiagnostic(entry, 'validation_timeout', 'udp_capability', message)
+        await this.publishRoutingState(entry)
+      }
+    } finally {
+      this.udpCapabilityValidationInFlight.delete(sessionId)
+    }
   }
 
   private pushRuntimeDiagnostic(
