@@ -6,6 +6,10 @@ import React, { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Spinner } from '@renderer/components/ui/spinner'
 import { MapPin } from 'lucide-react'
+import {
+  getUserFacingProxyDisplayName,
+  getUserFacingProxyType
+} from '../../../../core/ui/proxy-group-presentation'
 
 interface Props {
   mutateProxies: () => void
@@ -52,8 +56,11 @@ const ProxyItem: React.FC<Props> = (props) => {
     })
   }
 
-  const displayType =
+  const displayName = getUserFacingProxyDisplayName(proxy.name)
+  const displayType = getUserFacingProxyType(
+    proxy.name,
     !('all' in proxy) && proxy.serverDescription ? proxy.serverDescription : proxy.type
+  )
   const fixed = group.fixed && group.fixed === proxy.name
 
   return (
@@ -76,8 +83,8 @@ const ProxyItem: React.FC<Props> = (props) => {
             <>
               <div className="flex flex-col gap-0 flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="flag-emoji text-sm truncate" title={proxy.name}>
-                    {proxy.name}
+                  <span className="flag-emoji text-sm truncate" title={displayName}>
+                    {displayName}
                   </span>
                 </div>
                 <div className="text-[11px] text-muted-foreground leading-none mt-0.5">
@@ -122,8 +129,8 @@ const ProxyItem: React.FC<Props> = (props) => {
           ) : (
             <>
               <div className="flex items-center gap-1.5 text-ellipsis overflow-hidden whitespace-nowrap">
-                <span className="flag-emoji text-sm truncate" title={proxy.name}>
-                  {proxy.name}
+                <span className="flag-emoji text-sm truncate" title={displayName}>
+                  {displayName}
                 </span>
                 {proxyDisplayLayout === 'single' && (
                   <span className="text-muted-foreground text-xs shrink-0" title={displayType}>

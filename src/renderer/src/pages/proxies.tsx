@@ -30,6 +30,11 @@ import {
   LocateFixed,
   SlidersHorizontal
 } from 'lucide-react'
+import {
+  createUserFacingProxyGroupEntries,
+  createUserFacingProxyGroups,
+  getUserFacingProxyDisplayName
+} from '../../../core/ui/proxy-group-presentation'
 
 const groupTypeColor: Record<string, string> = {
   Selector: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
@@ -37,6 +42,11 @@ const groupTypeColor: Record<string, string> = {
   Fallback: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
   LoadBalance: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
   Relay: 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+}
+
+function resizeArray<T>(values: T[], length: number, fallback: T): T[] {
+  if (values.length === length) return values
+  return Array.from({ length }, (_, index) => values[index] ?? fallback)
 }
 
 const Proxies: React.FC = () => {
@@ -62,14 +72,23 @@ const Proxies: React.FC = () => {
   const [searchValue, setSearchValue] = useState(Array(groups.length).fill(''))
   const [isSettingModalOpen, setIsSettingModalOpen] = useState(false)
   const virtuosoRef = useRef<GroupedVirtuosoHandle>(null)
+  const visibleGroups = useMemo(() => createUserFacingProxyGroups(groups), [groups])
+
+  useEffect(() => {
+    setIsOpen((prev) => resizeArray(prev, visibleGroups.length, expandProxyGroups))
+    setDelaying((prev) => resizeArray(prev, visibleGroups.length, false))
+    setSearchValue((prev) => resizeArray(prev, visibleGroups.length, ''))
+  }, [visibleGroups.length, expandProxyGroups])
+
   const { groupCounts, allProxies } = useMemo(() => {
     const groupCounts: number[] = []
     const allProxies: (ControllerProxiesDetail | ControllerGroupDetail)[][] = []
-    if (groups.length !== searchValue.length) setSearchValue(Array(groups.length).fill(''))
-    groups.forEach((group, index) => {
+    visibleGroups.forEach((group, index) => {
       if (isOpen[index]) {
-        let groupProxies = group.all.filter(
-          (proxy) => proxy && includesIgnoreCase(proxy.name, searchValue[index])
+        let groupProxies = createUserFacingProxyGroupEntries(group.all).filter(
+          (proxy) =>
+            proxy &&
+            includesIgnoreCase(getUserFacingProxyDisplayName(proxy.name), searchValue[index])
         )
         const count = Math.floor(groupProxies.length / cols)
         groupCounts.push(groupProxies.length % cols === 0 ? count : count + 1)
@@ -92,11 +111,11 @@ const Proxies: React.FC = () => {
       }
     })
     return { groupCounts, allProxies }
-  }, [groups, isOpen, proxyDisplayOrder, cols, searchValue])
+  }, [visibleGroups, isOpen, proxyDisplayOrder, cols, searchValue])
 
   const allExpanded = useMemo(() => {
-    return groups.length > 0 && isOpen.every(Boolean)
-  }, [groups, isOpen])
+    return visibleGroups.length > 0 && isOpen.every(Boolean)
+  }, [visibleGroups, isOpen])
 
   const onChangeProxy = useCallback(
     async (group: string, proxy: string): Promise<void> => {
@@ -135,7 +154,7 @@ const Proxies: React.FC = () => {
       for (const proxy of allProxies[index]) {
         const promise = Promise.resolve().then(async () => {
           try {
-            await mihomoProxyDelay(proxy.name, groups[index].testUrl)
+            await mihomoProxyDelay(proxy.name, visibleGroups[index].testUrl)
           } catch {
             // ignore
           } finally {
@@ -158,7 +177,7 @@ const Proxies: React.FC = () => {
         return newDelaying
       })
     },
-    [allProxies, groups, delayTestConcurrency, mutate]
+    [allProxies, visibleGroups, delayTestConcurrency, mutate]
   )
 
   const calcCols = useCallback((): number => {
@@ -210,14 +229,14 @@ const Proxies: React.FC = () => {
         i += groupCounts[j]
       }
       i += Math.floor(
-        allProxies[index].findIndex((proxy) => proxy.name === groups[index].now) / cols
+        allProxies[index].findIndex((proxy) => proxy.name === visibleGroups[index].now) / cols
       )
       virtuosoRef.current?.scrollToIndex({
         index: Math.floor(i),
         align: 'start'
       })
     },
-    [isOpen, groupCounts, allProxies, groups, cols]
+    [isOpen, groupCounts, allProxies, visibleGroups, cols]
   )
 
   useEffect(() => {
@@ -238,26 +257,23 @@ const Proxies: React.FC = () => {
   const groupContent = useCallback(
     (index: number) => {
       if (
-        groups[index] &&
-        groups[index].icon &&
-        groups[index].icon.startsWith('http') &&
-        !localStorage.getItem(groups[index].icon)
+        visibleGroups[index] &&
+        visibleGroups[index].icon &&
+        visibleGroups[index].icon.startsWith('http') &&
+        !localStorage.getItem(visibleGroups[index].icon)
       ) {
-        getImageDataURL(groups[index].icon).then((dataURL) => {
-          localStorage.setItem(groups[index].icon, dataURL)
+        getImageDataURL(visibleGroups[index].icon).then((dataURL) => {
+          localStorage.setItem(visibleGroups[index].icon, dataURL)
           mutate()
         })
       }
-      const group = groups[index]
+      const group = visibleGroups[index]
       if (!group) return <div>Never See This</div>
 
-      const typeColorClass =
-        groupTypeColor[group.type] || 'bg-muted text-muted-foreground'
+      const typeColorClass = groupTypeColor[group.type] || 'bg-muted text-muted-foreground'
 
       return (
-        <div
-          className={`w-full ${!isOpen[index] ? 'pb-2' : ''} px-2`}
-        >
+        <div className={`w-full ${!isOpen[index] ? 'pb-2' : ''} px-2`}>
           <Card
             data-guide={index === 0 ? 'proxies-first-group' : undefined}
             data-guide-open={index === 0 ? `${isOpen[index]}` : undefined}
@@ -287,9 +303,11 @@ const Proxies: React.FC = () => {
                       />
                     </Avatar>
                   ) : null}
-                  <div className={`flex ${groupDisplayLayout === 'double' ? 'flex-col gap-0.5' : 'items-center gap-2'} min-w-0`}>
+                  <div
+                    className={`flex ${groupDisplayLayout === 'double' ? 'flex-col gap-0.5' : 'items-center gap-2'} min-w-0`}
+                  >
                     <span className="flag-emoji text-sm font-medium truncate leading-tight">
-                      {group.name}
+                      {getUserFacingProxyDisplayName(group.name)}
                     </span>
                     {groupDisplayLayout !== 'hidden' && (
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground leading-tight min-w-0">
@@ -299,7 +317,9 @@ const Proxies: React.FC = () => {
                         >
                           {group.type}
                         </Badge>
-                        <span className="flag-emoji truncate">{group.now}</span>
+                        <span className="flag-emoji truncate">
+                          {getUserFacingProxyDisplayName(group.now)}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -346,7 +366,7 @@ const Proxies: React.FC = () => {
       )
     },
     [
-      groups,
+      visibleGroups,
       groupCounts,
       isOpen,
       groupDisplayLayout,
@@ -386,10 +406,11 @@ const Proxies: React.FC = () => {
                 onProxyDelay={onProxyDelay}
                 onSelect={onChangeProxy}
                 proxy={allProxies[groupIndex][innerIndex * cols + i]}
-                group={groups[groupIndex]}
+                group={visibleGroups[groupIndex]}
                 proxyDisplayLayout={proxyDisplayLayout}
                 selected={
-                  allProxies[groupIndex][innerIndex * cols + i]?.name === groups[groupIndex].now
+                  allProxies[groupIndex][innerIndex * cols + i]?.name ===
+                  visibleGroups[groupIndex].now
                 }
               />
             )
@@ -407,7 +428,7 @@ const Proxies: React.FC = () => {
       mutate,
       onProxyDelay,
       onChangeProxy,
-      groups,
+      visibleGroups,
       proxyDisplayLayout
     ]
   )
