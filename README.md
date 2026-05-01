@@ -35,6 +35,13 @@ Koala Clash is built with Electron + React + TypeScript.
 
 **Backend:** Electron, Mihomo Core, sysproxy-go
 
+## User Guides
+
+- [Getting started with VPN / Amnezia](./docs/getting-started-vpn-amnezia.md)
+- [Platform capabilities](./docs/platform-capabilities.md)
+- [Troubleshooting](./docs/troubleshooting.md)
+- [Glossary](./docs/glossary.md)
+
 ### Quick Start
 
 ```bash

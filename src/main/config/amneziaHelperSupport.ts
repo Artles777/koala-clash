@@ -4,10 +4,30 @@ import { app } from 'electron'
 import { AmneziaHelperBackendMode } from '../../core/profiles/amnezia-helper-runtime-config'
 import { flattenAmneziaHelperRulePacks } from '../../core/routing/amnezia-helper-rule-packs'
 import {
+  DISCORD_REALTIME_PRESET_ID,
+  applyRealtimePresetValidationFreshness,
+  createRealtimePresetManualConfirmation,
+  getRealtimePresetDefinition,
+  parseRealtimeRuleString,
+  runRealtimePresetSmoke as createRealtimePresetSmokeEvidence,
+  runRealtimePresetValidationCheck
+} from '../../core/routing/realtime-reliability'
+import {
+  aggregateRealtimePresetEvidenceReports,
+  createRealtimePresetEvidenceReport
+} from '../../core/routing/realtime-preset-quality'
+import {
   evaluateAmneziaHelperTunRuleReliability,
   readAmneziaHelperTunDnsRuntimeState,
   type AmneziaHelperTunDnsRuntimeState
 } from '../../core/routing/amnezia-helper-tun-rule-reliability'
+import {
+  getRealtimePresetValidationEvidence,
+  readRealtimePresetValidationStore,
+  upsertRealtimePresetValidationEvidence,
+  writeRealtimePresetValidationStore,
+  type RealtimePresetValidationEvidence
+} from '../../features/realtime-preset-validation/store'
 import {
   resolveHelperBackend,
   ResolvedAmneziaHelperBackend
@@ -25,7 +45,8 @@ import {
   getAmneziaHelperLogs,
   getAmneziaHelperStartupPreflight,
   getAmneziaHelperStatus,
-  getLastAmneziaHelperConnectivityResult
+  getLastAmneziaHelperConnectivityResult,
+  validateAmneziaHelperConnectivity
 } from '../runtime/amnezia-helper-manager'
 import {
   getActiveAmneziaHelperRoutingTarget,
@@ -38,7 +59,7 @@ import {
 import { getLastDirectTunBypass } from '../runtime/direct-tun-bypass-state'
 import { getLastLearnedProcessBypass } from '../runtime/learned-process-bypass-state'
 import { getLastBypassCapabilityReport } from '../runtime/bypass-capability-state'
-import { dataDir, resourcesFilesDir } from '../utils/dirs'
+import { dataDir, realtimePresetValidationPath, resourcesFilesDir } from '../utils/dirs'
 import { getAmneziaHelperRulePacks } from './amneziaHelperRules'
 
 export async function getAmneziaHelperSupportSnapshot(
@@ -48,15 +69,23 @@ export async function getAmneziaHelperSupportSnapshot(
   const helperChecksumSha256 = backend.available
     ? await checksumFileIfPresent(backend.executablePath)
     : undefined
-  const [session, logs, rulePacks, lastConnectivityResult, tunDnsState, startupPreflight] =
-    await Promise.all([
-      getAmneziaHelperStatus(profileId),
-      getAmneziaHelperLogs(profileId),
-      getAmneziaHelperRulePacks(),
-      getLastAmneziaHelperConnectivityResult(profileId),
-      getCurrentTunDnsState(),
-      profileId ? getAmneziaHelperStartupPreflight(profileId).catch(() => undefined) : undefined
-    ])
+  const [
+    session,
+    logs,
+    rulePacks,
+    lastConnectivityResult,
+    tunDnsState,
+    runtimeRules,
+    startupPreflight
+  ] = await Promise.all([
+    getAmneziaHelperStatus(profileId),
+    getAmneziaHelperLogs(profileId),
+    getAmneziaHelperRulePacks(),
+    getLastAmneziaHelperConnectivityResult(profileId),
+    getCurrentTunDnsState(),
+    getCurrentRuntimeRules(),
+    profileId ? getAmneziaHelperStartupPreflight(profileId).catch(() => undefined) : undefined
+  ])
   const routingTarget =
     session.routingTarget ??
     getLastAmneziaHelperRoutingTarget() ??
@@ -66,6 +95,39 @@ export async function getAmneziaHelperSupportSnapshot(
   const directTunBypass = getLastDirectTunBypass()
   const learnedProcessBypass = getLastLearnedProcessBypass()
   const bypassCapabilities = getLastBypassCapabilityReport()
+  const effectiveProfileId = profileId ?? session.profileId
+  const validationStore = await readRealtimePresetValidationStore(realtimePresetValidationPath())
+  const realtimeEvidenceEntries = validationStore.entries.map((entry) => ({
+    ...applyRealtimePresetValidationFreshness({
+      validation: entry,
+      environment: {
+        profileId: entry.profileId,
+        platform: process.platform,
+        tunEnabled: tunDnsState.tunEnabled,
+        helperMode: session.backendMode,
+        udpConfidence: session.udpCapability.udpValidated ? 'proxy_validated' : 'unknown'
+      }
+    }),
+    profileId: entry.profileId
+  }))
+  const realtimePresetValidation = effectiveProfileId
+    ? getRealtimePresetValidationEvidence(
+        { schemaVersion: 1, entries: realtimeEvidenceEntries },
+        effectiveProfileId,
+        DISCORD_REALTIME_PRESET_ID
+      )
+    : undefined
+  const realtimePresetEvidence = createRealtimePresetEvidenceReport({
+    evidence: realtimeEvidenceEntries,
+    appVersion: app.getVersion(),
+    buildId: process.env.KOALA_BUILD_ID,
+    platform: process.platform,
+    arch: process.arch,
+    evidenceScope: 'local'
+  })
+  const realtimePresetQuality = aggregateRealtimePresetEvidenceReports({
+    reports: [realtimePresetEvidence]
+  })
   const ruleReliability = evaluateAmneziaHelperTunRuleReliability({
     ...tunDnsState,
     rules: flattenAmneziaHelperRulePacks(rulePacks, { enabledPacksOnly: true })
@@ -83,7 +145,7 @@ export async function getAmneziaHelperSupportSnapshot(
   return createAmneziaHelperDiagnosticsBundle({
     appVersion: app.getVersion(),
     buildId: process.env.KOALA_BUILD_ID,
-    profileId,
+    profileId: effectiveProfileId,
     backend: createAmneziaHelperBackendSupportSnapshot({
       backend,
       helperChecksumSha256
@@ -95,10 +157,145 @@ export async function getAmneziaHelperSupportSnapshot(
     routingTarget,
     lastConnectivityResult,
     tun,
+    runtimeRules,
+    realtimePresetValidation,
+    realtimePresetEvidence,
+    realtimePresetQuality,
     directTunBypass,
     learnedProcessBypass,
-    bypassCapabilities
+    bypassCapabilities,
+    helperMode: session.backendMode
   })
+}
+
+export async function runRealtimePresetValidation(
+  profileId: string,
+  presetId = DISCORD_REALTIME_PRESET_ID
+): Promise<RealtimePresetValidationEvidence> {
+  const session = await getAmneziaHelperStatus(profileId)
+  const tunDnsState = await getCurrentTunDnsState()
+  const routingTarget =
+    session.routingTarget ??
+    getLastAmneziaHelperRoutingTarget() ??
+    getActiveAmneziaHelperRoutingTarget()
+  const runtimeRules = (await getCurrentRuntimeRules())
+    .map(parseRealtimeRuleString)
+    .filter((rule): rule is NonNullable<typeof rule> => Boolean(rule))
+  let connectivityProbeAttempted = false
+  let connectivityResult = await getLastAmneziaHelperConnectivityResult(profileId)
+
+  if (session.status === 'running' && session.readiness === 'ready') {
+    connectivityProbeAttempted = true
+    try {
+      connectivityResult = await validateAmneziaHelperConnectivity(profileId)
+    } catch {
+      connectivityResult = await getLastAmneziaHelperConnectivityResult(profileId)
+    }
+  }
+
+  const evidence = {
+    ...runRealtimePresetValidationCheck({
+      presetId,
+      rules: runtimeRules,
+      udp: {
+        ...session.udpCapability,
+        runtimeAdvertisesUdp:
+          session.udpCapability.udpSupport === 'supported' && session.udpCapability.udpValidated
+      },
+      platform: process.platform,
+      tunEnabled: tunDnsState.tunEnabled,
+      profileId,
+      helperReady: session.status === 'running' && session.readiness === 'ready',
+      proxyInjected: routingTarget?.status === 'injected',
+      connectivityVerified: connectivityResult?.status === 'verified',
+      connectivityProbeAttempted,
+      helperMode: session.backendMode,
+      platformMode: `${process.platform}:${tunDnsState.tunEnabled ? 'tun' : 'proxy'}`
+    }),
+    profileId
+  }
+  await persistRealtimePresetValidation(evidence)
+  return evidence
+}
+
+export async function runRealtimePresetSmoke(
+  profileId: string,
+  presetId = DISCORD_REALTIME_PRESET_ID
+): Promise<RealtimePresetValidationEvidence> {
+  const session = await getAmneziaHelperStatus(profileId)
+  const tunDnsState = await getCurrentTunDnsState()
+  const routingTarget =
+    session.routingTarget ??
+    getLastAmneziaHelperRoutingTarget() ??
+    getActiveAmneziaHelperRoutingTarget()
+  const runtimeRules = (await getCurrentRuntimeRules())
+    .map(parseRealtimeRuleString)
+    .filter((rule): rule is NonNullable<typeof rule> => Boolean(rule))
+  let connectivityProbeAttempted = false
+  let connectivityResult = await getLastAmneziaHelperConnectivityResult(profileId)
+
+  if (session.status === 'running' && session.readiness === 'ready') {
+    connectivityProbeAttempted = true
+    try {
+      connectivityResult = await validateAmneziaHelperConnectivity(profileId)
+    } catch {
+      connectivityResult = await getLastAmneziaHelperConnectivityResult(profileId)
+    }
+  }
+
+  const observedIpEvidence = getPresetObservedIpEvidence(presetId)
+  const evidence = {
+    ...createRealtimePresetSmokeEvidence({
+      presetId,
+      profileId,
+      rules: runtimeRules,
+      udp: {
+        ...session.udpCapability,
+        runtimeAdvertisesUdp:
+          session.udpCapability.udpSupport === 'supported' && session.udpCapability.udpValidated
+      },
+      platform: process.platform,
+      tunEnabled: tunDnsState.tunEnabled,
+      helperReady: session.status === 'running' && session.readiness === 'ready',
+      proxyInjected: routingTarget?.status === 'injected',
+      connectivityVerified: connectivityResult?.status === 'verified',
+      connectivityProbeAttempted,
+      helperMode: session.backendMode,
+      platformMode: `${process.platform}:${tunDnsState.tunEnabled ? 'tun' : 'proxy'}`,
+      observedIpEvidenceCount: observedIpEvidence.count,
+      observedIpEvidenceProcesses: observedIpEvidence.processes,
+      observedIpEvidenceIps: observedIpEvidence.ips
+    }),
+    profileId
+  }
+  await persistRealtimePresetValidation(evidence)
+  return evidence
+}
+
+export async function confirmRealtimePresetValidation(
+  profileId: string,
+  note?: string,
+  presetId = DISCORD_REALTIME_PRESET_ID
+): Promise<RealtimePresetValidationEvidence> {
+  const [session, tunDnsState] = await Promise.all([
+    getAmneziaHelperStatus(profileId),
+    getCurrentTunDnsState()
+  ])
+  const evidence = {
+    ...createRealtimePresetManualConfirmation({
+      presetId,
+      profileId,
+      note,
+      helperMode: session.backendMode,
+      udpConfidence: session.udpCapability.udpValidated ? 'proxy_validated' : 'unknown',
+      platform: process.platform,
+      tunEnabled: tunDnsState.tunEnabled,
+      platformMode: `${process.platform}:${tunDnsState.tunEnabled ? 'tun' : 'proxy'}`
+    }),
+    profileId
+  }
+  await persistRealtimePresetValidation(evidence)
+  return evidence
 }
 
 export async function exportAmneziaHelperDiagnosticsBundle(
@@ -106,6 +303,45 @@ export async function exportAmneziaHelperDiagnosticsBundle(
 ): Promise<AmneziaHelperDiagnosticsExportResult> {
   const bundle = await getAmneziaHelperSupportSnapshot(profileId)
   return writeAmneziaHelperDiagnosticsBundle(bundle, path.join(dataDir(), 'diagnostics'))
+}
+
+async function persistRealtimePresetValidation(
+  evidence: RealtimePresetValidationEvidence
+): Promise<void> {
+  const filePath = realtimePresetValidationPath()
+  const store = await readRealtimePresetValidationStore(filePath)
+  await writeRealtimePresetValidationStore(
+    filePath,
+    upsertRealtimePresetValidationEvidence(store, evidence)
+  )
+}
+
+function getPresetObservedIpEvidence(presetId: string): {
+  count: number
+  processes: string[]
+  ips: string[]
+} {
+  const resolution = getLastLearnedProcessBypass()
+  if (!resolution) return { count: 0, processes: [], ips: [] }
+  const definition = getRealtimePresetDefinition(presetId)
+  if (!definition) return { count: 0, processes: [], ips: [] }
+  const presetProcessNames = new Set(
+    definition.processNames.map((processName) => processName.toLowerCase())
+  )
+  const entries = resolution.entries.filter(
+    (entry) => entry.active && presetProcessNames.has(entry.processName.toLowerCase())
+  )
+  const processes = [...new Set(entries.map((entry) => entry.processName))].sort((a, b) =>
+    a.localeCompare(b)
+  )
+  const ips = [...new Set(entries.map((entry) => entry.observedIp))].sort((a, b) =>
+    a.localeCompare(b)
+  )
+  return {
+    count: entries.length,
+    processes,
+    ips
+  }
 }
 
 function resolveSupportBackend(): ResolvedAmneziaHelperBackend {
@@ -152,4 +388,19 @@ async function getCurrentTunDnsState(): Promise<AmneziaHelperTunDnsRuntimeState>
   const { getControledMihomoConfig } = await import('./controledMihomo')
   const config = await getControledMihomoConfig()
   return readAmneziaHelperTunDnsRuntimeState(config)
+}
+
+async function getCurrentRuntimeRules(): Promise<string[]> {
+  try {
+    const { getRuntimeConfig } = await import('../core/factory')
+    const runtimeConfig = await getRuntimeConfig()
+    const rules = (runtimeConfig as { rules?: unknown }).rules
+    if (Array.isArray(rules)) {
+      return rules.filter((rule): rule is string => typeof rule === 'string')
+    }
+  } catch {
+    // Runtime config is unavailable before the first core generation.
+  }
+
+  return []
 }

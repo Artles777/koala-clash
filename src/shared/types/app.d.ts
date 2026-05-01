@@ -175,6 +175,44 @@ type AmneziaHelperUdpReasonCode =
   | 'proxy_endpoint_not_ready'
   | 'backend_capability_unknown'
   | 'stub_backend'
+type RealtimeConfidence = 'high' | 'medium' | 'low'
+type RealtimeUdpConfidence = 'end_to_end_validated' | 'proxy_validated' | 'unknown'
+type RealtimePresetValidationStatus =
+  | 'not_tested'
+  | 'partial'
+  | 'smoke_passed'
+  | 'validated'
+  | 'failed'
+type RealtimePresetValidationSource =
+  | 'rule_analysis'
+  | 'runtime_state'
+  | 'connectivity_probe'
+  | 'preset_smoke'
+  | 'manual_confirmation'
+  | 'runtime_analysis'
+  | 'helper_connectivity'
+  | 'manual_smoke'
+  | 'unknown'
+type RealtimePresetValidationCheckCode =
+  | 'helper_ready'
+  | 'proxy_injected'
+  | 'udp_capability'
+  | 'connectivity_probe'
+  | 'process_coverage'
+  | 'domain_coverage'
+  | 'catch_all_proxy'
+  | 'observed_ip_evidence'
+type RealtimePresetValidationCheckStatus = 'passed' | 'warning' | 'failed' | 'skipped'
+type RealtimePresetSmokeResult = 'passed' | 'partial' | 'failed'
+type RealtimePresetEvidenceScope = 'local' | 'packaged'
+type RealtimePresetRuntimeScenario = 'proxy' | 'tun' | 'unknown'
+type RealtimePresetQualityStatus =
+  | 'validated'
+  | 'smoke_passed'
+  | 'partial'
+  | 'failed'
+  | 'not_tested'
+  | 'missing'
 type AmneziaHelperRoutingDiagnosticReason =
   | 'invalid_input'
   | 'no_rule_match'
@@ -1027,6 +1065,174 @@ interface AmneziaHelperUdpSupportSnapshot {
   checkedAt?: number
 }
 
+interface RealtimeReliabilitySummary {
+  realtimeConfidence: RealtimeConfidence
+  udpConfidence: RealtimeUdpConfidence
+  helperUdpAdvertised: boolean
+  helperUdpValidated: boolean
+  endToEndUdpValidated: boolean
+  ruleCoverage: {
+    processCoverage: boolean
+    domainCoverage: boolean
+    catchAllProxy: boolean
+    proxyRuleCount: number
+    processProxyRuleCount: number
+    domainProxyRuleCount: number
+  }
+  platform: string
+  processNameMode?: EffectiveBypassMode
+  presetValidation: {
+    presetId: string
+    validationStatus: RealtimePresetValidationStatus
+    validatedAt?: number
+    lastValidatedAt?: number
+    validationSource: RealtimePresetValidationSource
+    validationSummary?: string
+    helperModeAtValidation?: string
+    udpConfidenceAtValidation?: RealtimeUdpConfidence
+    platformModeAtValidation?: string
+    validationNotes: string[]
+    validationChecks?: Array<{
+      code: RealtimePresetValidationCheckCode
+      status: RealtimePresetValidationCheckStatus
+      message: string
+    }>
+    smokeResult?: RealtimePresetSmokeResult
+    observedIpEvidenceCount?: number
+    observedIpEvidenceProcesses?: string[]
+    observedIpEvidenceIps?: string[]
+    validationExpired?: boolean
+    staleAfter?: number
+    environmentChanged?: boolean
+    lastEnvironmentFingerprint?: string
+    currentEnvironmentFingerprint?: string
+    freshnessReasons?: string[]
+  }
+  topReasons: Array<{
+    code: string
+    message: string
+  }>
+  warnings: Array<{
+    code: string
+    message: string
+  }>
+  recommendedActions: Array<{
+    code: string
+    message: string
+  }>
+}
+
+interface RealtimePresetValidationEvidence {
+  profileId: string
+  presetId: string
+  validationStatus: RealtimePresetValidationStatus
+  validatedAt?: number
+  lastValidatedAt?: number
+  validationSource: RealtimePresetValidationSource
+  validationSummary?: string
+  helperModeAtValidation?: string
+  udpConfidenceAtValidation?: RealtimeUdpConfidence
+  platformModeAtValidation?: string
+  validationNotes: string[]
+  validationChecks?: Array<{
+    code: RealtimePresetValidationCheckCode
+    status: RealtimePresetValidationCheckStatus
+    message: string
+  }>
+  smokeResult?: RealtimePresetSmokeResult
+  observedIpEvidenceCount?: number
+  observedIpEvidenceProcesses?: string[]
+  observedIpEvidenceIps?: string[]
+  validationExpired?: boolean
+  staleAfter?: number
+  environmentChanged?: boolean
+  lastEnvironmentFingerprint?: string
+  currentEnvironmentFingerprint?: string
+  freshnessReasons?: string[]
+}
+
+interface RealtimePresetEvidenceReport {
+  schemaVersion: 1
+  format: 'koala-clash.realtime-preset-evidence'
+  generatedAt: number
+  runId?: string
+  buildId?: string
+  appVersion?: string
+  evidenceScope: RealtimePresetEvidenceScope
+  rows: Array<{
+    presetId: string
+    presetTitle: string
+    profileId?: string
+    profileName?: string
+    platform: string
+    arch?: string
+    runtimeScenario: RealtimePresetRuntimeScenario
+    tunEnabled: boolean
+    helperMode?: string
+    udpConfidence?: RealtimeUdpConfidence
+    validationStatus: RealtimePresetValidationStatus
+    validationSource: RealtimePresetValidationSource
+    smokeResult?: RealtimePresetSmokeResult
+    lastValidatedAt?: number
+    validationSummary?: string
+    validationExpired: boolean
+    environmentChanged: boolean
+    stale: boolean
+    staleAfter?: number
+    freshnessReasons: string[]
+    observedIpEvidence: {
+      count: number
+      ipCount: number
+      processes: string[]
+    }
+    evidenceScope: RealtimePresetEvidenceScope
+    buildId?: string
+    appVersion?: string
+    runId?: string
+    reportPath?: string
+    majorWarnings: string[]
+  }>
+}
+
+interface RealtimePresetQualityMatrix {
+  schemaVersion: 1
+  format: 'koala-clash.realtime-preset-quality-matrix'
+  generatedAt: number
+  rows: Array<{
+    presetId: string
+    presetTitle: string
+    platform: string
+    runtimeScenario: RealtimePresetRuntimeScenario
+    latestStatus: RealtimePresetQualityStatus
+    totalEvidence: number
+    packagedEvidenceCount: number
+    localEvidenceCount: number
+    validatedCount: number
+    smokePassedCount: number
+    partialCount: number
+    failedCount: number
+    staleCount: number
+    observedIpEvidenceCount: number
+    latestValidatedAt?: number
+    latestBuildId?: string
+    latestAppVersion?: string
+    latestReportPath?: string
+    majorWarnings: string[]
+  }>
+  summary: {
+    totalRows: number
+    packagedEvidenceRows: number
+    localOnlyRows: number
+    validatedRows: number
+    smokePassedRows: number
+    partialRows: number
+    failedRows: number
+    missingRows: number
+    staleRows: number
+    majorWarnings: string[]
+  }
+}
+
 interface AmneziaHelperSupportSummaryExport {
   schemaVersion: 1
   generatedAt: number
@@ -1119,6 +1325,8 @@ interface AmneziaHelperSupportSummaryExport {
     | 'helperRuleReliabilityReason'
   >
   udp: AmneziaHelperUdpSupportSnapshot
+  realtime: RealtimeReliabilitySummary
+  realtimePresetQuality?: RealtimePresetQualityMatrix
   stability: AmneziaHelperStabilitySupportSnapshot
   rules: AmneziaHelperRulePacksSupportSummary
   supportStatusCodes: AmneziaHelperSupportStatusCode[]
@@ -1153,6 +1361,9 @@ interface AmneziaHelperDiagnosticsBundle {
     lastResult?: AmneziaHelperConnectivityResult
   }
   udp: AmneziaHelperUdpSupportSnapshot
+  realtime: RealtimeReliabilitySummary
+  realtimePresetEvidence?: RealtimePresetEvidenceReport
+  realtimePresetQuality?: RealtimePresetQualityMatrix
   routing: {
     target?: AmneziaHelperRoutingTarget
   }

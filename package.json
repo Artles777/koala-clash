@@ -19,6 +19,7 @@
     "amnezia-helper:smoke:resolve": "tsx scripts/amnezia-helper-smoke.ts --resolve-only",
     "amnezia-helper:matrix": "tsx scripts/amnezia-helper-matrix.ts",
     "amnezia-helper:platform-validation": "tsx scripts/amnezia-helper-platform-validation.ts",
+    "realtime-preset:quality": "tsx scripts/realtime-preset-quality.ts",
     "updater": "node scripts/updater.mjs",
     "checksum": "node scripts/checksum.mjs",
     "telegram": "node scripts/telegram.mjs",

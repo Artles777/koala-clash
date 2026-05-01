@@ -7,7 +7,8 @@ export const KOALA_RU_BUNDLE_RULE_PROVIDER = {
   format: 'mrs',
   url: 'https://github.com/legiz-ru/mihomo-rule-sets/raw/main/ru-bundle/rule.mrs',
   path: './ru-bundle/rule.mrs',
-  interval: 86400
+  interval: 86400,
+  proxy: 'DIRECT'
 } as const
 
 export function createKoalaRuBundleRule(target: string): string {

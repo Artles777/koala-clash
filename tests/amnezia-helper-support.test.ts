@@ -7,6 +7,10 @@ import type { AmneziaHelperRulePack } from '../src/core/routing/amnezia-helper-r
 import { createAmneziaHelperRule } from '../src/core/routing/amnezia-helper-rules'
 import { evaluateAmneziaHelperTunRuleReliability } from '../src/core/routing/amnezia-helper-tun-rule-reliability'
 import { createAmneziaHelperUdpCapability } from '../src/core/routing/amnezia-helper-udp-capability'
+import {
+  aggregateRealtimePresetEvidenceReports,
+  createRealtimePresetEvidenceReport
+} from '../src/core/routing/realtime-preset-quality'
 import type { AmneziaHelperSession } from '../src/main/runtime/amnezia-helper-manager'
 import {
   AmneziaHelperBackendSupportSnapshot,
@@ -165,6 +169,124 @@ describe('Amnezia helper support diagnostics', () => {
     assert.equal(bundle.readinessSummary.helperStatus, 'ready')
     assert.equal(bundle.readinessSummary.stabilityStatus, 'ready')
     assert.equal(bundle.udp.runtimeAdvertisesUdp, true)
+  })
+
+  it('includes realtime reliability in support bundles without leaking internal targets', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      rulePacks: [],
+      runtimeRules: [
+        'PROCESS-NAME,Discord,PROXY',
+        'DOMAIN-SUFFIX,discord.com,AMNEZIA_HELPER',
+        'MATCH,AMNEZIA_HELPER'
+      ]
+    })
+
+    assert.equal(bundle.realtime.realtimeConfidence, 'medium')
+    assert.equal(bundle.realtime.udpConfidence, 'proxy_validated')
+    assert.equal(bundle.realtime.ruleCoverage.processCoverage, true)
+    assert.equal(bundle.realtime.ruleCoverage.domainCoverage, true)
+    assert.equal(bundle.realtime.ruleCoverage.catchAllProxy, true)
+    assert.equal(bundle.realtime.presetValidation.validationStatus, 'partial')
+    assert.equal(
+      bundle.realtime.topReasons.some((reason) => reason.code === 'preset_partially_validated'),
+      true
+    )
+    assert.equal(
+      bundle.realtime.recommendedActions.some((action) => action.code === 'verify_udp_end_to_end'),
+      true
+    )
+    assert.equal(bundle.summaryExport.realtime.ruleCoverage.catchAllProxy, true)
+    assert.equal(bundle.summaryExport.realtime.presetValidation.validationStatus, 'partial')
+    assert.equal(JSON.stringify(bundle.summaryExport.realtime).includes('AMNEZIA_HELPER'), false)
+  })
+
+  it('includes stored realtime preset validation evidence in support bundles', () => {
+    const realtimePresetEvidence = createRealtimePresetEvidenceReport({
+      evidence: [
+        {
+          profileId: 'profile-1',
+          presetId: 'discord_voice_vpn',
+          validationStatus: 'validated',
+          validationSource: 'manual_confirmation',
+          lastValidatedAt: 1710000000000,
+          platformModeAtValidation: 'darwin:tun',
+          validationNotes: ['Discord call was stable.']
+        }
+      ],
+      platform: 'darwin',
+      arch: 'arm64',
+      evidenceScope: 'local',
+      generatedAt: 1710000000000
+    })
+    const realtimePresetQuality = aggregateRealtimePresetEvidenceReports({
+      reports: [realtimePresetEvidence],
+      generatedAt: 1710000000000
+    })
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      session: createSession({
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      runtimeRules: ['PROCESS-NAME,Discord,PROXY', 'DOMAIN-SUFFIX,discord.com,PROXY'],
+      realtimePresetValidation: {
+        presetId: 'discord_voice_vpn',
+        validationStatus: 'validated',
+        validationSource: 'manual_confirmation',
+        lastValidatedAt: 1710000000000,
+        validationSummary: 'Manual check passed.',
+        validationNotes: ['Discord call was stable.']
+      },
+      realtimePresetEvidence,
+      realtimePresetQuality
+    })
+
+    assert.equal(bundle.realtime.presetValidation.validationStatus, 'validated')
+    assert.equal(bundle.realtime.presetValidation.validationSource, 'manual_confirmation')
+    assert.equal(bundle.realtime.presetValidation.lastValidatedAt, 1710000000000)
+    assert.equal(
+      bundle.summaryExport.realtime.presetValidation.validationSummary,
+      'Manual check passed.'
+    )
+    assert.equal(bundle.realtimePresetEvidence?.rows.length, 1)
+    assert.equal(bundle.realtimePresetQuality?.rows[0].latestStatus, 'validated')
+    assert.equal(bundle.summaryExport.realtimePresetQuality?.summary.validatedRows, 1)
+  })
+
+  it('marks realtime preset evidence stale when support environment changes', () => {
+    const bundle = createAmneziaHelperDiagnosticsBundle({
+      backend: backendAvailable,
+      profileId: 'vpn-1',
+      session: createSession({
+        backendMode: 'production',
+        connectivityStatus: 'verified',
+        validationStage: 'upstream_request'
+      }),
+      runtimeRules: ['PROCESS-NAME,Discord,PROXY', 'DOMAIN-SUFFIX,discord.com,PROXY'],
+      realtimePresetValidation: {
+        presetId: 'discord_voice_vpn',
+        validationStatus: 'smoke_passed',
+        validationSource: 'preset_smoke',
+        lastValidatedAt: 1710000000000,
+        lastEnvironmentFingerprint:
+          'profile=vpn-1|platform=darwin|tun=on|helper=production|udp=proxy_validated',
+        validationNotes: ['Smoke passed.']
+      },
+      platform: 'darwin',
+      tun: createTunSupportSnapshot(false)
+    })
+
+    assert.equal(bundle.realtime.presetValidation.validationStatus, 'smoke_passed')
+    assert.equal(bundle.realtime.presetValidation.environmentChanged, true)
+    assert.equal(
+      bundle.realtime.topReasons.some((reason) => reason.code === 'preset_validation_stale'),
+      true
+    )
   })
 
   it('keeps autonomous lifecycle status as secondary support context', () => {

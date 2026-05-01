@@ -287,6 +287,34 @@ export async function getAmneziaHelperSupportSnapshot(
   )
 }
 
+export async function runRealtimePresetValidation(
+  id: string,
+  presetId?: string
+): Promise<RealtimePresetValidationEvidence> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('runRealtimePresetValidation', id, presetId)
+  )
+}
+
+export async function runRealtimePresetSmoke(
+  id: string,
+  presetId?: string
+): Promise<RealtimePresetValidationEvidence> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('runRealtimePresetSmoke', id, presetId)
+  )
+}
+
+export async function confirmRealtimePresetValidation(
+  id: string,
+  note?: string,
+  presetId?: string
+): Promise<RealtimePresetValidationEvidence> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('confirmRealtimePresetValidation', id, note, presetId)
+  )
+}
+
 export async function exportAmneziaHelperDiagnosticsBundle(
   id?: string
 ): Promise<AmneziaHelperDiagnosticsExportResult> {

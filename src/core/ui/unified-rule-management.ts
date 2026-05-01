@@ -3,6 +3,11 @@ import {
   pinKoalaRuBundleRulesLast
 } from '../routing/mihomo-rule-provider-presets'
 import {
+  createRealtimePresetRules,
+  DISCORD_REALTIME_PRESET_ID,
+  getRealtimePresetDefinition
+} from '../routing/realtime-reliability'
+import {
   getUnifiedRuleDisplayTarget,
   isHiddenUnifiedRuntimeRule,
   isUserFacingRuleTarget,
@@ -44,6 +49,23 @@ export interface UnifiedRuleBulkDuplicateResult {
   added: number
   skippedDuplicate: number
   invalid: UnifiedRuleBulkInvalidEntry[]
+}
+
+export interface UnifiedRealtimePresetApplyResult {
+  patch: UnifiedRulePatchFile
+  presetId: string
+  added: number
+  skippedDuplicate: number
+  processCoverage: boolean
+  domainCoverage: boolean
+}
+
+export interface UnifiedObservedIpPromotionResult {
+  patch: UnifiedRulePatchFile
+  added: number
+  skippedDuplicate: number
+  invalid: UnifiedRuleBulkInvalidEntry[]
+  promotedRules: string[]
 }
 
 interface UnifiedBulkImportEntry {
@@ -409,6 +431,100 @@ export function importUnifiedRulesToPatch(input: {
   return { patch: dedupeUnifiedRulePatchFile(next), added, skippedDuplicate, invalid }
 }
 
+export function applyDiscordRealtimePresetToPatch(
+  patch: UnifiedRulePatchFile,
+  target = 'PROXY'
+): UnifiedRealtimePresetApplyResult {
+  return applyRealtimePresetToPatch({
+    patch,
+    presetId: DISCORD_REALTIME_PRESET_ID,
+    target
+  })
+}
+
+export function applyRealtimePresetToPatch(input: {
+  patch: UnifiedRulePatchFile
+  presetId: string
+  target?: string
+}): UnifiedRealtimePresetApplyResult {
+  const next = clonePatch(input.patch)
+  const existing = createPatchRuleSet(next)
+  let added = 0
+  let skippedDuplicate = 0
+  const target = input.target ?? 'PROXY'
+  const definition = getRealtimePresetDefinition(input.presetId)
+
+  for (const rule of createRealtimePresetRules(input.presetId, target)) {
+    if (existing.has(rule)) {
+      skippedDuplicate += 1
+      continue
+    }
+    next.prepend.push(rule)
+    existing.add(rule)
+    added += 1
+  }
+
+  return {
+    patch: dedupeUnifiedRulePatchFile(next),
+    presetId: input.presetId,
+    added,
+    skippedDuplicate,
+    processCoverage: (definition?.processNames.length ?? 0) > 0,
+    domainCoverage:
+      (definition?.domains.length ?? 0) > 0 || (definition?.domainSuffixes.length ?? 0) > 0
+  }
+}
+
+export function promoteObservedIpsToUnifiedRules(input: {
+  patch: UnifiedRulePatchFile
+  observedIps: string[]
+  target?: string
+}): UnifiedObservedIpPromotionResult {
+  const next = clonePatch(input.patch)
+  const target = input.target ?? 'PROXY'
+  const existing = createPatchRuleSet(next)
+  const invalid: UnifiedRuleBulkInvalidEntry[] = []
+  const promotedRules: string[] = []
+  let added = 0
+  let skippedDuplicate = 0
+
+  if (!isUserFacingRuleTarget(target)) {
+    return {
+      patch: dedupeUnifiedRulePatchFile(next),
+      added,
+      skippedDuplicate,
+      invalid: input.observedIps.map((ip) => ({ value: ip, reason: 'unsupported_target' })),
+      promotedRules
+    }
+  }
+
+  for (const observedIp of uniqueStrings(input.observedIps)) {
+    const cidr = normalizeObservedIpToIpv4Cidr(observedIp)
+    if (!cidr) {
+      invalid.push({ value: observedIp, reason: 'unsupported_ip' })
+      continue
+    }
+
+    const rule = `IP-CIDR,${cidr},${target}`
+    if (existing.has(rule)) {
+      skippedDuplicate += 1
+      continue
+    }
+    next.prepend.push(rule)
+    existing.add(rule)
+    promotedRules.push(rule)
+    added += 1
+  }
+
+  return {
+    patch: dedupeUnifiedRulePatchFile(next),
+    added,
+    skippedDuplicate,
+    invalid,
+    promotedRules
+  }
+}
+
 export function createUnifiedRulesExportDocument(
   rules: UnifiedRuleItem[],
   exportedAt = new Date()
@@ -652,6 +768,25 @@ function isValidIpv4Cidr(value: string): boolean {
       if (!/^\d+$/.test(octet)) return false
       const value = Number(octet)
       return value >= 0 && value <= 255
+    })
+  )
+}
+
+function normalizeObservedIpToIpv4Cidr(value: string): string | undefined {
+  const normalized = value.trim()
+  if (!normalized) return undefined
+  if (normalized.includes('/')) return isValidIpv4Cidr(normalized) ? normalized : undefined
+  return isValidIpv4Address(normalized) ? `${normalized}/32` : undefined
+}
+
+function isValidIpv4Address(value: string): boolean {
+  const octets = value.split('.')
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => {
+      if (!/^\d+$/.test(octet)) return false
+      const parsed = Number(octet)
+      return parsed >= 0 && parsed <= 255
     })
   )
 }

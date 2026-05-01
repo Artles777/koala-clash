@@ -134,6 +134,10 @@ export function amneziaHelperRulesPath(): string {
   return path.join(dataDir(), 'amnezia-helper-rules.yaml')
 }
 
+export function realtimePresetValidationPath(): string {
+  return path.join(dataDir(), 'realtime-preset-validation.json')
+}
+
 export function profilesDir(): string {
   return path.join(dataDir(), 'profiles')
 }

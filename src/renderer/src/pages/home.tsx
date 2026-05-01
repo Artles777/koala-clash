@@ -28,6 +28,7 @@ import { Spinner } from '@renderer/components/ui/spinner'
 import { CharacterMorph } from '@renderer/components/ui/character-morph'
 import { calcTraffic } from '@renderer/utils/calc'
 import { useTrafficStore } from '@renderer/store/traffic-store'
+import CoreReadinessShortcut from '@renderer/components/mihomo/core-readiness-shortcut'
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B'
@@ -323,6 +324,8 @@ const Home: React.FC = () => {
               </div>
             </div>
           )}
+
+          <CoreReadinessShortcut />
 
           {/* Connection button */}
           <div className="flex flex-col grow-3 items-center justify-center min-h-0">

@@ -24,6 +24,7 @@ import {
   addAmneziaHelperRule,
   addAmneziaHelperRulePack,
   bulkAddAmneziaHelperRules,
+  confirmRealtimePresetValidation,
   evaluateAmneziaHelperRouting,
   exportAmneziaHelperDiagnosticsBundle,
   exportAmneziaHelperRulePacks,
@@ -34,6 +35,8 @@ import {
   getAmneziaProfileDetails,
   importAmneziaHelperRulePacks,
   removeAmneziaHelperRule,
+  runRealtimePresetSmoke,
+  runRealtimePresetValidation,
   startAmneziaHelper,
   stopAmneziaHelper,
   updateAmneziaHelperRulePack,
@@ -42,6 +45,11 @@ import {
 } from '@renderer/utils/ipc'
 import { useTranslation } from 'react-i18next'
 import { Copy, Download, Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react'
+import {
+  createRealtimePresetQualityPresetPresentation,
+  type RealtimePresetQualityScenarioPresentation,
+  type RealtimePresetQualityTone
+} from '../../../../core/routing/realtime-preset-quality'
 
 interface Props {
   id: string
@@ -98,6 +106,7 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
   )
   const [supportBusy, setSupportBusy] = useState(false)
   const [supportError, setSupportError] = useState<string | null>(null)
+  const [realtimeValidationBusy, setRealtimeValidationBusy] = useState(false)
   const [diagnosticsExportPath, setDiagnosticsExportPath] = useState<string | null>(null)
   const [supportSummaryCopied, setSupportSummaryCopied] = useState(false)
   const [ruleDraft, setRuleDraft] = useState<HelperRuleDraft>(() => createEmptyRuleDraft())
@@ -291,6 +300,20 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
     supportTunRuleReliability !== undefined &&
     supportTunRuleReliability !== 'reliable'
   const supportUdp = supportSnapshot?.udp
+  const supportRealtime = supportSnapshot?.realtime
+  const supportRealtimeQuality = useMemo(
+    () =>
+      createRealtimePresetQualityPresetPresentation(
+        supportSnapshot?.realtimePresetQuality,
+        supportRealtime?.presetValidation.presetId ?? 'discord_voice_vpn',
+        supportSnapshot?.platform.platform
+      ),
+    [
+      supportRealtime?.presetValidation.presetId,
+      supportSnapshot?.platform.platform,
+      supportSnapshot?.realtimePresetQuality
+    ]
+  )
   const readinessSummary = supportSnapshot?.readinessSummary
   const readinessBadgeVariant =
     readinessSummary?.overallStatus === 'blocked' ? 'destructive' : 'outline'
@@ -336,6 +359,47 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
       setHelperError(`${e}`)
     } finally {
       setConnectivityBusy(false)
+    }
+  }
+
+  const onRunRealtimePresetCheck = async (): Promise<void> => {
+    setRealtimeValidationBusy(true)
+    setSupportError(null)
+    try {
+      await runRealtimePresetValidation(id)
+      await refreshSupportState()
+    } catch (e) {
+      setSupportError(`${e}`)
+    } finally {
+      setRealtimeValidationBusy(false)
+    }
+  }
+
+  const onRunRealtimePresetSmoke = async (): Promise<void> => {
+    setRealtimeValidationBusy(true)
+    setSupportError(null)
+    try {
+      await runRealtimePresetSmoke(id)
+      await refreshSupportState()
+    } catch (e) {
+      setSupportError(`${e}`)
+    } finally {
+      setRealtimeValidationBusy(false)
+    }
+  }
+
+  const onConfirmRealtimePreset = async (): Promise<void> => {
+    const noteInput = window.prompt(t('pages.rules.realtimePresetManualNotePrompt'))
+    if (noteInput === null) return
+    setRealtimeValidationBusy(true)
+    setSupportError(null)
+    try {
+      await confirmRealtimePresetValidation(id, noteInput.trim() || undefined)
+      await refreshSupportState()
+    } catch (e) {
+      setSupportError(`${e}`)
+    } finally {
+      setRealtimeValidationBusy(false)
     }
   }
 
@@ -1272,6 +1336,97 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                     label={t('profile.udpReason')}
                     value={supportUdp?.udpReasonCode ?? '-'}
                   />
+                  <RuntimeRow
+                    label={t('profile.realtimeConfidence')}
+                    value={
+                      supportRealtime
+                        ? getRealtimeConfidenceLabel(t, supportRealtime.realtimeConfidence)
+                        : '-'
+                    }
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimePresetValidation')}
+                    value={
+                      supportRealtime
+                        ? getRealtimeValidationStatusLabel(
+                            t,
+                            supportRealtime.presetValidation.validationStatus
+                          )
+                        : '-'
+                    }
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimeValidationSource')}
+                    value={
+                      supportRealtime
+                        ? getRealtimeValidationSourceLabel(
+                            t,
+                            supportRealtime.presetValidation.validationSource
+                          )
+                        : '-'
+                    }
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimeLastValidated')}
+                    value={formatTimestamp(
+                      supportRealtime?.presetValidation.lastValidatedAt ??
+                        supportRealtime?.presetValidation.validatedAt
+                    )}
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimeValidationSummary')}
+                    value={supportRealtime?.presetValidation.validationSummary ?? '-'}
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimeSmokeResult')}
+                    value={supportRealtime?.presetValidation.smokeResult ?? '-'}
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimeObservedIpEvidence')}
+                    value={String(supportRealtime?.presetValidation.observedIpEvidenceCount ?? 0)}
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimePresetQuality')}
+                    value={
+                      supportSnapshot?.realtimePresetQuality
+                        ? t('profile.realtimePresetQualityValue', {
+                            packaged:
+                              supportSnapshot.realtimePresetQuality.summary.packagedEvidenceRows,
+                            local: supportSnapshot.realtimePresetQuality.summary.localOnlyRows,
+                            stale: supportSnapshot.realtimePresetQuality.summary.staleRows
+                          })
+                        : '-'
+                    }
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimeQualityScenarioProxy')}
+                    value={formatRealtimeQualityScenario(t, supportRealtimeQuality.proxy)}
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimeQualityScenarioTun')}
+                    value={formatRealtimeQualityScenario(t, supportRealtimeQuality.tun)}
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimeValidationFreshness')}
+                    value={
+                      supportRealtime
+                        ? getRealtimeFreshnessMessage(t, supportRealtime.presetValidation) ||
+                          t('profile.realtimeValidationFresh')
+                        : '-'
+                    }
+                  />
+                  <RuntimeRow
+                    label={t('profile.realtimeRuleCoverage')}
+                    value={
+                      supportRealtime
+                        ? t('profile.realtimeRuleCoverageValue', {
+                            process: formatBoolean(t, supportRealtime.ruleCoverage.processCoverage),
+                            domain: formatBoolean(t, supportRealtime.ruleCoverage.domainCoverage),
+                            catchAll: formatBoolean(t, supportRealtime.ruleCoverage.catchAllProxy)
+                          })
+                        : '-'
+                    }
+                  />
                 </div>
 
                 {startupPreflightBlockers.length > 0 && (
@@ -1335,6 +1490,110 @@ const AmneziaProfileDetailsModal: React.FC<Props> = ({ id, onClose }) => {
                     <div className="mt-1 text-muted-foreground">{supportUdp.udpExplanation}</div>
                   </div>
                 )}
+
+                {supportRealtime && supportRealtime.warnings.length > 0 && (
+                  <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                    <div className="font-medium">{t('profile.realtimeReliabilityWarning')}</div>
+                    <div className="mt-1 space-y-1 text-muted-foreground">
+                      {supportRealtime.warnings.slice(0, 3).map((warning) => (
+                        <div key={warning.code}>{getRealtimeWarningMessage(t, warning)}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {supportRealtimeQuality.warningCodes.length > 0 && (
+                  <div className="mt-3 rounded-md border border-stroke/50 bg-background/50 p-2 text-xs">
+                    <div className="font-medium">{t('profile.realtimePresetQuality')}</div>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <Badge
+                        variant={getRealtimeQualityBadgeVariant(supportRealtimeQuality.tone)}
+                        className={getRealtimeQualityBadgeClassName(supportRealtimeQuality.tone)}
+                      >
+                        {t(supportRealtimeQuality.bestStatusLabelKey)}
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        {t(supportRealtimeQuality.evidenceScopeLabelKey)}
+                      </span>
+                      <span
+                        className={
+                          supportRealtimeQuality.stale ? 'text-warning' : 'text-muted-foreground'
+                        }
+                      >
+                        {t(supportRealtimeQuality.freshnessLabelKey)}
+                      </span>
+                    </div>
+                    <div className="mt-1 space-y-1 text-muted-foreground">
+                      {supportRealtimeQuality.warningCodes.slice(0, 4).map((code) => (
+                        <div key={code}>{getRealtimeQualityWarningMessage(t, code)}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {supportRealtime?.presetValidation.validationChecks &&
+                  supportRealtime.presetValidation.validationChecks.length > 0 && (
+                    <div className="mt-3 rounded-md border border-stroke/50 bg-background/50 p-2 text-xs">
+                      <div className="font-medium">{t('profile.realtimeValidationChecks')}</div>
+                      <div className="mt-1 space-y-1">
+                        {supportRealtime.presetValidation.validationChecks.map((check) => (
+                          <div key={check.code} className="flex justify-between gap-2">
+                            <span className="text-muted-foreground">{check.message}</span>
+                            <span>{check.status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                {supportRealtime && supportRealtime.topReasons.length > 0 && (
+                  <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                    <div className="font-medium">{t('profile.realtimeTopReasons')}</div>
+                    <div className="mt-1 space-y-1 text-muted-foreground">
+                      {supportRealtime.topReasons.slice(0, 3).map((reason) => (
+                        <div key={reason.code}>{getRealtimeReasonMessage(t, reason)}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {supportRealtime && supportRealtime.recommendedActions.length > 0 && (
+                  <div className="mt-3 rounded-md border border-stroke/50 bg-background/50 p-2 text-xs">
+                    <div className="font-medium">{t('profile.realtimeRecommendedActions')}</div>
+                    <div className="mt-1 space-y-1 text-muted-foreground">
+                      {supportRealtime.recommendedActions.slice(0, 4).map((action) => (
+                        <div key={action.code}>{getRealtimeActionMessage(t, action)}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={realtimeValidationBusy}
+                    onClick={onRunRealtimePresetCheck}
+                  >
+                    {t('pages.rules.runRealtimePresetCheck')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={realtimeValidationBusy}
+                    onClick={onRunRealtimePresetSmoke}
+                  >
+                    {t('pages.rules.runRealtimePresetSmoke')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={realtimeValidationBusy}
+                    onClick={onConfirmRealtimePreset}
+                  >
+                    {t('pages.rules.markRealtimePresetVerified')}
+                  </Button>
+                </div>
 
                 {supportPrimaryStatus && (
                   <div className="mt-3 rounded-md border border-stroke/50 bg-background/50 p-2 text-xs">
@@ -2116,6 +2375,198 @@ function getUdpSupportLabel(
       return t('profile.udpSupportUnknown')
     default:
       return '-'
+  }
+}
+
+function getRealtimeConfidenceLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  confidence: RealtimeConfidence
+): string {
+  switch (confidence) {
+    case 'high':
+      return t('profile.realtimeConfidenceHigh')
+    case 'medium':
+      return t('profile.realtimeConfidenceMedium')
+    case 'low':
+      return t('profile.realtimeConfidenceLow')
+  }
+}
+
+function formatRealtimeQualityScenario(
+  t: ReturnType<typeof useTranslation>['t'],
+  scenario: RealtimePresetQualityScenarioPresentation
+): string {
+  return t('profile.realtimeQualityScenarioValue', {
+    status: t(scenario.statusLabelKey),
+    scope: t(scenario.evidenceScopeLabelKey)
+  })
+}
+
+function getRealtimeQualityBadgeVariant(
+  tone: RealtimePresetQualityTone
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (tone === 'success') return 'default'
+  if (tone === 'danger') return 'destructive'
+  if (tone === 'warning') return 'outline'
+  return 'secondary'
+}
+
+function getRealtimeQualityBadgeClassName(tone: RealtimePresetQualityTone): string {
+  if (tone === 'success') return 'rounded-sm bg-green-600 text-white'
+  if (tone === 'warning') return 'rounded-sm border-warning text-warning'
+  return 'rounded-sm'
+}
+
+function getRealtimeQualityWarningMessage(
+  t: ReturnType<typeof useTranslation>['t'],
+  code: string
+): string {
+  switch (code) {
+    case 'no_evidence':
+      return t('profile.realtimeQualityWarningNoEvidence')
+    case 'local_evidence_only':
+      return t('profile.realtimeQualityWarningLocalOnly')
+    case 'stale_evidence_present':
+    case 'evidence_stale':
+    case 'validation_expired':
+    case 'environment_changed':
+      return t('profile.realtimeQualityWarningStale')
+    case 'validation_failed':
+    case 'smoke_failed':
+      return t('profile.realtimeQualityWarningFailed')
+    case 'smoke_partial':
+    case 'preset_partially_validated':
+      return t('profile.realtimeQualityWarningPartial')
+    case 'no_observed_ip_evidence':
+      return t('profile.realtimeQualityWarningNoObservedIps')
+    case 'macos_fallback_heavy':
+      return t('profile.realtimeQualityWarningMacosFallback')
+    case 'windows_native_bypass_requires_service':
+      return t('profile.realtimeQualityWarningWindowsService')
+    default:
+      return code
+  }
+}
+
+function getRealtimeWarningMessage(
+  t: ReturnType<typeof useTranslation>['t'],
+  warning: { code: string; message: string }
+): string {
+  switch (warning.code) {
+    case 'udp_not_validated':
+      return t('profile.realtimeWarningUdpNotValidated')
+    case 'udp_not_end_to_end_validated':
+      return t('profile.realtimeWarningUdpNotEndToEndValidated')
+    case 'no_proxy_rule_coverage':
+      return t('profile.realtimeWarningNoProxyRuleCoverage')
+    case 'no_final_proxy_catch_all':
+      return t('profile.realtimeWarningNoFinalProxyCatchAll')
+    case 'domain_only_rules_partial':
+      return t('profile.realtimeWarningDomainOnlyRulesPartial')
+    case 'process_only_rules_partial':
+      return t('profile.realtimeWarningProcessOnlyRulesPartial')
+    case 'process_name_metadata_platform_dependent':
+      return t('profile.realtimeWarningProcessNameMetadataPlatformDependent')
+    default:
+      return warning.message
+  }
+}
+
+function getRealtimeReasonMessage(
+  t: ReturnType<typeof useTranslation>['t'],
+  reason: { code: string; message: string }
+): string {
+  switch (reason.code) {
+    case 'preset_not_tested':
+      return t('profile.realtimeReasonPresetNotTested')
+    case 'preset_partially_validated':
+      return t('profile.realtimeReasonPresetPartiallyValidated')
+    case 'preset_smoke_passed':
+      return t('profile.realtimeReasonPresetSmokePassed')
+    case 'preset_validation_failed':
+      return t('profile.realtimeReasonPresetValidationFailed')
+    case 'preset_validation_stale':
+      return t('profile.realtimeReasonPresetValidationStale')
+    default:
+      return getRealtimeWarningMessage(t, reason)
+  }
+}
+
+function getRealtimeActionMessage(
+  t: ReturnType<typeof useTranslation>['t'],
+  action: { code: string; message: string }
+): string {
+  switch (action.code) {
+    case 'validate_helper_udp':
+      return t('profile.realtimeActionValidateHelperUdp')
+    case 'verify_udp_end_to_end':
+      return t('profile.realtimeActionVerifyUdpEndToEnd')
+    case 'add_realtime_preset':
+      return t('profile.realtimeActionAddPreset')
+    case 'add_final_match_proxy':
+      return t('profile.realtimeActionAddFinalMatchProxy')
+    case 'add_process_and_domain_rules':
+      return t('profile.realtimeActionAddProcessAndDomainRules')
+    case 'strengthen_domain_coverage':
+      return t('profile.realtimeActionStrengthenDomainCoverage')
+    case 'add_observed_ip_rules':
+      return t('profile.realtimeActionAddObservedIpRules')
+    case 'review_platform_process_fallback':
+      return t('profile.realtimeActionReviewPlatformProcessFallback')
+    case 'run_realtime_smoke':
+      return t('profile.realtimeActionRunRealtimeSmoke')
+    default:
+      return action.message
+  }
+}
+
+function getRealtimeValidationStatusLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  status: RealtimePresetValidationStatus
+): string {
+  switch (status) {
+    case 'validated':
+      return t('profile.realtimeValidationValidated')
+    case 'smoke_passed':
+      return t('profile.realtimeValidationSmokePassed')
+    case 'partial':
+      return t('profile.realtimeValidationPartial')
+    case 'failed':
+      return t('profile.realtimeValidationFailed')
+    case 'not_tested':
+      return t('profile.realtimeValidationNotTested')
+  }
+}
+
+function getRealtimeFreshnessMessage(
+  t: ReturnType<typeof useTranslation>['t'],
+  validation: RealtimeReliabilitySummary['presetValidation']
+): string {
+  if (validation.environmentChanged) return t('profile.realtimeValidationEnvironmentChanged')
+  if (validation.validationExpired) return t('profile.realtimeValidationExpired')
+  return ''
+}
+
+function getRealtimeValidationSourceLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  source: RealtimePresetValidationSource
+): string {
+  switch (source) {
+    case 'rule_analysis':
+    case 'runtime_analysis':
+      return t('profile.realtimeValidationSourceRuleAnalysis')
+    case 'runtime_state':
+      return t('profile.realtimeValidationSourceRuntimeState')
+    case 'connectivity_probe':
+    case 'helper_connectivity':
+      return t('profile.realtimeValidationSourceConnectivityProbe')
+    case 'preset_smoke':
+    case 'manual_smoke':
+      return t('profile.realtimeValidationSourcePresetSmoke')
+    case 'manual_confirmation':
+      return t('profile.realtimeValidationSourceManualConfirmation')
+    case 'unknown':
+      return t('profile.realtimeValidationSourceUnknown')
   }
 }
 

@@ -29,6 +29,16 @@ import type {
   EffectiveBypassMode,
   NativeProcessBypassStatus
 } from '../../core/routing/bypass-capabilities'
+import {
+  analyzeRealtimeReliability,
+  parseRealtimeRuleString,
+  type RealtimePresetValidationState,
+  type RealtimeReliabilitySummary
+} from '../../core/routing/realtime-reliability'
+import type {
+  RealtimePresetEvidenceReport,
+  RealtimePresetQualityMatrix
+} from '../../core/routing/realtime-preset-quality'
 import type {
   AmneziaHelperExecutableValidationIssue,
   AmneziaHelperExecutableValidationResult,
@@ -377,6 +387,9 @@ export interface AmneziaHelperDiagnosticsBundle {
     lastResult?: AmneziaHelperConnectivityResult
   }
   udp: AmneziaHelperUdpSupportSnapshot
+  realtime: RealtimeReliabilitySummary
+  realtimePresetEvidence?: RealtimePresetEvidenceReport
+  realtimePresetQuality?: RealtimePresetQualityMatrix
   routing: {
     target?: AmneziaHelperRoutingTarget
   }
@@ -472,6 +485,8 @@ export interface AmneziaHelperSupportSummaryExport {
     | 'helperRuleReliabilityReason'
   >
   udp: AmneziaHelperUdpSupportSnapshot
+  realtime: RealtimeReliabilitySummary
+  realtimePresetQuality?: RealtimePresetQualityMatrix
   stability: AmneziaHelperStabilitySupportSnapshot
   rules: AmneziaHelperRulePacksSupportSummary
   supportStatusCodes: AmneziaHelperSupportStatusCode[]
@@ -514,6 +529,11 @@ interface CreateDiagnosticsBundleInput {
   udp?: AmneziaHelperUdpSupportSnapshot
   stability?: AmneziaHelperStabilitySupportSnapshot
   stabilityReport?: AmneziaHelperStabilityReport
+  runtimeRules?: string[]
+  realtimePresetValidation?: Partial<RealtimePresetValidationState>
+  realtimePresetEvidence?: RealtimePresetEvidenceReport
+  realtimePresetQuality?: RealtimePresetQualityMatrix
+  helperMode?: string
 }
 
 interface CreateSupportSummaryInput {
@@ -598,6 +618,20 @@ export function createAmneziaHelperDiagnosticsBundle(
         createInitialAmneziaHelperUdpCapability(input.session?.backendMode)
     )
   const stability = input.stability ?? createStabilitySupportSnapshot(input.stabilityReport)
+  const realtime = analyzeRealtimeReliability({
+    rules: (input.runtimeRules ?? [])
+      .map(parseRealtimeRuleString)
+      .filter((rule): rule is NonNullable<ReturnType<typeof parseRealtimeRuleString>> =>
+        Boolean(rule)
+      ),
+    udp,
+    platform: input.platform ?? process.platform,
+    tunEnabled: tun.enabled,
+    profileId: input.profileId,
+    helperMode: input.helperMode ?? session?.backendMode,
+    processDirectEffectiveBypassMode: tun.processDirectEffectiveBypassMode,
+    presetValidation: input.realtimePresetValidation
+  })
   const support = createAmneziaHelperSupportSummary({
     backend: input.backend,
     startupPreflight: input.startupPreflight,
@@ -630,6 +664,8 @@ export function createAmneziaHelperDiagnosticsBundle(
     session,
     tun,
     udp,
+    realtime,
+    realtimePresetQuality: input.realtimePresetQuality,
     stability,
     rules,
     support,
@@ -662,6 +698,9 @@ export function createAmneziaHelperDiagnosticsBundle(
       lastResult: cloneConnectivityResult(lastConnectivityResult)
     },
     udp,
+    realtime,
+    realtimePresetEvidence: input.realtimePresetEvidence,
+    realtimePresetQuality: input.realtimePresetQuality,
     routing: {
       target: cloneRoutingTarget(routingTarget)
     },
@@ -1374,6 +1413,8 @@ function createSupportSummaryExport(input: {
   session?: AmneziaHelperSessionSupportSnapshot
   tun: AmneziaHelperTunSupportSnapshot
   udp: AmneziaHelperUdpSupportSnapshot
+  realtime: RealtimeReliabilitySummary
+  realtimePresetQuality?: RealtimePresetQualityMatrix
   stability: AmneziaHelperStabilitySupportSnapshot
   rules: AmneziaHelperRulePacksSupportSummary
   support: AmneziaHelperSupportSummary
@@ -1469,12 +1510,40 @@ function createSupportSummaryExport(input: {
       helperRuleReliabilityReason: input.tun.helperRuleReliabilityReason
     },
     udp: { ...input.udp },
+    realtime: cloneRealtimeReliabilitySummary(input.realtime),
+    realtimePresetQuality: input.realtimePresetQuality,
     stability: { ...input.stability },
     rules: {
       ...input.rules,
       rulesByType: { ...input.rules.rulesByType }
     },
     supportStatusCodes: input.support.statuses.map((status) => status.code)
+  }
+}
+
+function cloneRealtimeReliabilitySummary(
+  realtime: RealtimeReliabilitySummary
+): RealtimeReliabilitySummary {
+  return {
+    ...realtime,
+    ruleCoverage: { ...realtime.ruleCoverage },
+    presetValidation: {
+      ...realtime.presetValidation,
+      validationNotes: [...realtime.presetValidation.validationNotes],
+      validationChecks: realtime.presetValidation.validationChecks?.map((check) => ({ ...check })),
+      observedIpEvidenceProcesses: realtime.presetValidation.observedIpEvidenceProcesses
+        ? [...realtime.presetValidation.observedIpEvidenceProcesses]
+        : undefined,
+      observedIpEvidenceIps: realtime.presetValidation.observedIpEvidenceIps
+        ? [...realtime.presetValidation.observedIpEvidenceIps]
+        : undefined,
+      freshnessReasons: realtime.presetValidation.freshnessReasons
+        ? [...realtime.presetValidation.freshnessReasons]
+        : undefined
+    },
+    topReasons: realtime.topReasons.map((reason) => ({ ...reason })),
+    warnings: realtime.warnings.map((warning) => ({ ...warning })),
+    recommendedActions: realtime.recommendedActions.map((action) => ({ ...action }))
   }
 }
 

@@ -242,6 +242,9 @@ const EditInfoModal: React.FC<Props> = (props) => {
                 {urlInvalid && (
                   <p className="text-xs text-destructive">{t('profile.invalidImportSource')}</p>
                 )}
+                {!urlInvalid && (
+                  <p className="text-xs text-muted-foreground">{t('profile.importSourceHint')}</p>
+                )}
               </div>
             )}
 

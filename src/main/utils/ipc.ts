@@ -57,7 +57,10 @@ import {
   importAmneziaHelperRulePacks,
   evaluateAmneziaHelperRouting,
   getAmneziaHelperSupportSnapshot,
-  exportAmneziaHelperDiagnosticsBundle
+  exportAmneziaHelperDiagnosticsBundle,
+  runRealtimePresetValidation,
+  runRealtimePresetSmoke,
+  confirmRealtimePresetValidation
 } from '../config'
 import {
   manualGrantCorePermition,
@@ -273,6 +276,15 @@ export function registerIpcMainHandlers(): void {
   )
   ipcMain.handle('getAmneziaHelperSupportSnapshot', (_e, id) =>
     ipcErrorWrapper(getAmneziaHelperSupportSnapshot)(id)
+  )
+  ipcMain.handle('runRealtimePresetValidation', (_e, id, presetId) =>
+    ipcErrorWrapper(runRealtimePresetValidation)(id, presetId)
+  )
+  ipcMain.handle('runRealtimePresetSmoke', (_e, id, presetId) =>
+    ipcErrorWrapper(runRealtimePresetSmoke)(id, presetId)
+  )
+  ipcMain.handle('confirmRealtimePresetValidation', (_e, id, note, presetId) =>
+    ipcErrorWrapper(confirmRealtimePresetValidation)(id, note, presetId)
   )
   ipcMain.handle('exportAmneziaHelperDiagnosticsBundle', (_e, id) =>
     ipcErrorWrapper(exportAmneziaHelperDiagnosticsBundle)(id)

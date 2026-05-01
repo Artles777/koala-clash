@@ -16,7 +16,10 @@ export {
 export { evaluateAmneziaHelperRouting } from './amneziaHelperRoutingDiagnostics'
 export {
   getAmneziaHelperSupportSnapshot,
-  exportAmneziaHelperDiagnosticsBundle
+  exportAmneziaHelperDiagnosticsBundle,
+  runRealtimePresetValidation,
+  runRealtimePresetSmoke,
+  confirmRealtimePresetValidation
 } from './amneziaHelperSupport'
 export {
   getProfile,
