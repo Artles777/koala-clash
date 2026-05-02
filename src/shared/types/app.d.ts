@@ -116,6 +116,8 @@ interface ProfileItem {
   id: string
   type: 'remote' | 'local'
   name: string
+  sourceType?: 'vless_uri'
+  source?: ProfileSourceMetadata
   url?: string // remote
   ua?: string // remote
   file?: string // local
@@ -130,6 +132,20 @@ interface ProfileItem {
   announce?: string
   logo?: string
   supportUrl?: string
+}
+
+interface ProfileSourceMetadata {
+  vless?: VlessProfileMetadata
+}
+
+interface VlessProfileMetadata {
+  host: string
+  port: number
+  transport: 'tcp' | 'ws' | 'grpc' | 'httpupgrade' | 'xhttp'
+  security: 'none' | 'tls' | 'reality'
+  packetEncoding?: string
+  flow?: string
+  serverName?: string
 }
 
 interface SubscriptionUserInfo {

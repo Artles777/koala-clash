@@ -16,9 +16,14 @@ import { InfinityIcon, WifiOff, PlusCircle, ChevronRight, Globe, ArrowUp, ArrowD
 import { SiTelegram } from 'react-icons/si'
 import EditInfoModal from '@renderer/components/profiles/edit-info-modal'
 import { Spinner } from '@renderer/components/ui/spinner'
+import { Badge } from '@renderer/components/ui/badge'
 import { CharacterMorph } from '@renderer/components/ui/character-morph'
 import { calcTraffic } from '@renderer/utils/calc'
 import { useTrafficStore } from '@renderer/store/traffic-store'
+import {
+  formatVlessRuntimeErrorMessage,
+  getVlessProfilePresentation
+} from '@renderer/utils/vless-profile-presentation'
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B'
@@ -45,7 +50,7 @@ const Home: React.FC = () => {
   const { 'mixed-port': mixedPort } = controledMihomoConfig || {}
   const sysProxyDisabled = mixedPort == 0
 
-  const { profileConfig, addProfileItem } = useProfileConfig()
+  const { profileConfig, addProfileItem, mutateProfileConfig } = useProfileConfig()
   const { groups } = useGroups()
   const navigate = useNavigate()
   const hasProfiles = (profileConfig?.items?.length ?? 0) > 0
@@ -133,13 +138,16 @@ const Home: React.FC = () => {
     try {
       await addProfileItem(currentProfile)
     } catch (e) {
-      toast.error(`${e}`)
+      toast.error(
+        vlessPresentation ? formatVlessRuntimeErrorMessage(e, currentProfile, t) : `${e}`
+      )
     } finally {
       setUpdating(false)
     }
   }
 
   const subscription = currentProfile?.extra
+  const vlessPresentation = getVlessProfilePresentation(currentProfile)
   const trafficUsed = (subscription?.upload ?? 0) + (subscription?.download ?? 0)
   const trafficTotal = subscription?.total ?? 0
   const trafficRemaining = trafficTotal > 0 ? trafficTotal - trafficUsed : 0
@@ -235,6 +243,10 @@ const Home: React.FC = () => {
                 setShowEditModal(false)
                 setEditingItem(null)
               }}
+              onImported={() => {
+                mutateProfileConfig()
+                window.electron.ipcRenderer.send('updateTrayMenu')
+              }}
               onClose={() => {
                 setShowEditModal(false)
                 setEditingItem(null)
@@ -261,7 +273,12 @@ const Home: React.FC = () => {
                     }}
                   />
                 )}
-                <span className="font-medium text-base">{currentProfile.name}</span>
+                <span className="font-medium text-base truncate">{currentProfile.name}</span>
+                {vlessPresentation && (
+                  <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-semibold">
+                    {vlessPresentation.badge}
+                  </Badge>
+                )}
                 {currentProfile.type === 'remote' && (
                   <button
                     onClick={handleUpdateProfile}
@@ -278,6 +295,14 @@ const Home: React.FC = () => {
                   className="text-sm font-medium text-center mt-2 whitespace-pre-line"
                 >
                   {currentProfile.announce}
+                </div>
+              )}
+              {vlessPresentation && (
+                <div
+                  title={vlessPresentation.summary}
+                  className="mt-1 text-xs text-muted-foreground text-center truncate"
+                >
+                  {vlessPresentation.summary}
                 </div>
               )}
             </div>

@@ -42,7 +42,9 @@ import {
   setProfileStr,
   updateProfileItem,
   setProfileConfig,
-  convertMrsRuleset
+  convertMrsRuleset,
+  importVlessUri,
+  validateVlessProfile
 } from '../config'
 import {
   manualGrantCorePermition,
@@ -195,6 +197,8 @@ export function registerIpcMainHandlers(): void {
   ipcMain.handle('updateProfileItem', (_e, item) => ipcErrorWrapper(updateProfileItem)(item))
   ipcMain.handle('changeCurrentProfile', (_e, id) => ipcErrorWrapper(changeCurrentProfile)(id))
   ipcMain.handle('addProfileItem', (_e, item) => ipcErrorWrapper(addProfileItem)(item))
+  ipcMain.handle('importVlessUri', (_e, raw) => ipcErrorWrapper(importVlessUri)(raw))
+  ipcMain.handle('validateVlessProfile', (_e, id) => ipcErrorWrapper(validateVlessProfile)(id))
   ipcMain.handle('removeProfileItem', (_e, id) => ipcErrorWrapper(removeProfileItem)(id))
   ipcMain.handle('restartCore', ipcErrorWrapper(restartCore))
   ipcMain.handle('restartMihomoConnections', ipcErrorWrapper(restartMihomoConnections))

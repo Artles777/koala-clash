@@ -159,6 +159,16 @@ export async function addProfileItem(item: Partial<ProfileItem>): Promise<void> 
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('addProfileItem', item))
 }
 
+export async function importVlessUri(raw: string): Promise<ProfileItem> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('importVlessUri', raw))
+}
+
+export async function validateVlessProfile(
+  id: string
+): Promise<{ profileId: string; checkedAt: number }> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('validateVlessProfile', id))
+}
+
 export async function removeProfileItem(id: string): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('removeProfileItem', id))
 }

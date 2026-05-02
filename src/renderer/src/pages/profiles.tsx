@@ -17,6 +17,10 @@ import {
 import { SortableContext } from '@dnd-kit/sortable'
 import { useTranslation } from 'react-i18next'
 import { Plus, FileDown, RefreshCcw } from 'lucide-react'
+import {
+  formatVlessRuntimeErrorMessage,
+  getVlessProfilePresentation
+} from '@renderer/utils/vless-profile-presentation'
 
 const emptyItems: ProfileItem[] = []
 
@@ -25,6 +29,7 @@ const Profiles: React.FC = () => {
   const {
     profileConfig,
     setProfileConfig,
+    mutateProfileConfig,
     addProfileItem,
     updateProfileItem,
     removeProfileItem,
@@ -196,6 +201,10 @@ const Profiles: React.FC = () => {
           updateProfileItem={async (item: ProfileItem) => {
             await addProfileItem(item)
           }}
+          onImported={() => {
+            mutateProfileConfig()
+            window.electron.ipcRenderer.send('updateTrayMenu')
+          }}
           onClose={() => {
             setShowEditModal(false)
             setEditingItem(null)
@@ -248,9 +257,18 @@ const Profiles: React.FC = () => {
                   switching={switching}
                   onClick={async () => {
                     setSwitching(true)
-                    await changeCurrentProfile(item.id)
-                    await new Promise((resolve) => setTimeout(resolve, 500))
-                    setSwitching(false)
+                    try {
+                      await changeCurrentProfile(item.id)
+                      await new Promise((resolve) => setTimeout(resolve, 500))
+                    } catch (e) {
+                      toast.error(
+                        getVlessProfilePresentation(item)
+                          ? formatVlessRuntimeErrorMessage(e, item, t)
+                          : `${e}`
+                      )
+                    } finally {
+                      setSwitching(false)
+                    }
                   }}
                 />
               ))}

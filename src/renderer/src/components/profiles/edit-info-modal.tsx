@@ -9,13 +9,32 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import { Button } from '@renderer/components/ui/button'
+import { Badge } from '@renderer/components/ui/badge'
 import { Input } from '@renderer/components/ui/input'
 import { Switch } from '@renderer/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip'
 import { cn } from '@renderer/lib/utils'
 import SettingItem from '../base/base-setting-item'
 import { Spinner } from '@renderer/components/ui/spinner'
-import { getFilePath, readTextFile, mihomoHotReloadConfig } from '@renderer/utils/ipc'
+import {
+  getFilePath,
+  readTextFile,
+  mihomoHotReloadConfig,
+  importVlessUri,
+  validateVlessProfile
+} from '@renderer/utils/ipc'
+import {
+  classifyProfileImportInput,
+  submitProfileImportInput
+} from '@renderer/utils/profile-import-input'
+import {
+  formatVlessImportErrorMessage,
+  formatVlessParseErrorMessage,
+  getVlessProfileDetails,
+  getVlessDraftPresentation,
+  getVlessProfilePresentation,
+  getVlessTroubleshootingHints
+} from '@renderer/utils/vless-profile-presentation'
 import { useTranslation } from 'react-i18next'
 import {
   ClipboardPaste,
@@ -30,16 +49,8 @@ interface Props {
   item: ProfileItem
   isCurrent: boolean
   updateProfileItem: (item: ProfileItem) => Promise<void>
+  onImported?: () => void
   onClose: () => void
-}
-
-function isValidUrl(url: string): boolean {
-  try {
-    const u = new URL(url)
-    return u.protocol === 'http:' || u.protocol === 'https:'
-  } catch {
-    return false
-  }
 }
 
 const EditInfoModal: React.FC<Props> = (props) => {
@@ -50,21 +61,55 @@ const EditInfoModal: React.FC<Props> = (props) => {
   const [urlTouched, setUrlTouched] = useState(false)
   const [localFileName, setLocalFileName] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [validatingVless, setValidatingVless] = useState(false)
   const closeRef = useRef<HTMLButtonElement>(null)
 
   const isNew = !item.id
   const isLocal = values.type === 'local'
-  const urlInvalid = !isLocal && urlTouched && !!values.url && !isValidUrl(values.url)
+  const importInput = classifyProfileImportInput(values.url || '')
+  const vlessInvalid = importInput.kind === 'vless_uri' && importInput.vless?.ok === false
+  const vlessErrorMessage =
+    vlessInvalid && importInput.vless?.ok === false
+      ? formatVlessParseErrorMessage(importInput.vless.errors[0], t)
+      : undefined
+  const vlessImportPreview =
+    importInput.kind === 'vless_uri' && importInput.vless?.ok === true
+      ? getVlessDraftPresentation(importInput.vless.draft)
+      : null
+  const existingVlessPresentation = getVlessProfilePresentation(values)
+  const existingVlessDetails = getVlessProfileDetails(values, t)
+  const existingVlessHints = getVlessTroubleshootingHints(values, t)
+  const urlInvalid =
+    !isLocal && urlTouched && !!values.url && (importInput.kind === 'invalid' || vlessInvalid)
 
   const canImport = isNew
     ? isLocal
       ? !!values.file
-      : isValidUrl(values.url || '')
+      : importInput.kind === 'remote_url' ||
+        (importInput.kind === 'vless_uri' && importInput.vless?.ok === true)
     : true
 
   const onSave = async (): Promise<void> => {
     setSaving(true)
     try {
+      if (isNew && !isLocal) {
+        await submitProfileImportInput(values.url || '', {
+          importRemoteUrl: async (url) => {
+            await updateProfileItem({
+              ...values,
+              type: 'remote',
+              url
+            })
+          },
+          importVlessUri: async (raw) => {
+            await importVlessUri(raw)
+            props.onImported?.()
+          }
+        })
+        closeRef.current?.click()
+        return
+      }
+
       const itemToSave = { ...values }
       await updateProfileItem(itemToSave)
       if (item.id && isCurrent) {
@@ -72,7 +117,9 @@ const EditInfoModal: React.FC<Props> = (props) => {
       }
       closeRef.current?.click()
     } catch (e) {
-      toast.error(`${e}`)
+      toast.error(
+        importInput.kind === 'vless_uri' ? formatVlessImportErrorMessage(e, t) : `${e}`
+      )
     } finally {
       setSaving(false)
     }
@@ -129,6 +176,19 @@ const EditInfoModal: React.FC<Props> = (props) => {
     })
     setLocalFileName(null)
     setUrlTouched(false)
+  }
+
+  const handleValidateVlessProfile = async (): Promise<void> => {
+    if (!values.id) return
+    setValidatingVless(true)
+    try {
+      await validateVlessProfile(values.id)
+      toast.success(t('profile.vlessValidationPassed'))
+    } catch (e) {
+      toast.error(formatVlessImportErrorMessage(e, t))
+    } finally {
+      setValidatingVless(false)
+    }
   }
 
   return (
@@ -194,7 +254,8 @@ const EditInfoModal: React.FC<Props> = (props) => {
                     data-guide="profile-import-url-input"
                     className={cn(
                       'h-9 pr-9',
-                      urlInvalid && 'border-destructive focus-visible:border-destructive focus-visible:ring-destructive/50'
+                      urlInvalid &&
+                        'border-destructive focus-visible:border-destructive focus-visible:ring-destructive/50'
                     )}
                     placeholder={t('profile.urlPlaceholder')}
                     value={values.url || ''}
@@ -221,7 +282,19 @@ const EditInfoModal: React.FC<Props> = (props) => {
                   </Tooltip>
                 </div>
                 {urlInvalid && (
-                  <p className="text-xs text-destructive">{t('profile.invalidUrl')}</p>
+                  <p className="text-xs text-destructive">
+                    {vlessErrorMessage || t('profile.invalidUrl')}
+                  </p>
+                )}
+                {vlessImportPreview && !urlInvalid && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-semibold">
+                      {vlessImportPreview.badge}
+                    </Badge>
+                    <span title={vlessImportPreview.summary} className="truncate">
+                      {vlessImportPreview.summary}
+                    </span>
+                  </div>
                 )}
               </div>
             )}
@@ -345,6 +418,60 @@ const EditInfoModal: React.FC<Props> = (props) => {
                   onChange={(e) => setValues({ ...values, name: e.target.value })}
                 />
               </SettingItem>
+              {existingVlessPresentation && (
+                <div className="rounded-xl border border-stroke/50 bg-accent/20 p-3 flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-semibold">
+                        {existingVlessPresentation.badge}
+                      </Badge>
+                      <span
+                        title={existingVlessPresentation.summary}
+                        className="truncate text-xs text-muted-foreground"
+                      >
+                        {existingVlessPresentation.summary}
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-xs shrink-0"
+                      disabled={validatingVless}
+                      onClick={handleValidateVlessProfile}
+                    >
+                      <span className="relative inline-flex items-center justify-center">
+                        {validatingVless && <Spinner className="size-3.5 absolute" />}
+                        <span className={validatingVless ? 'invisible' : undefined}>
+                          {t('profile.validateVlessProfile')}
+                        </span>
+                      </span>
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+                    {existingVlessDetails.map((row) => (
+                      <React.Fragment key={row.label}>
+                        <span className="text-muted-foreground">{row.label}</span>
+                        <span title={row.value} className="truncate text-foreground">
+                          {row.value}
+                        </span>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  {existingVlessHints.length > 0 && (
+                    <div className="rounded-lg border border-stroke/40 bg-background/30 p-2">
+                      <div className="mb-1 text-xs font-medium">
+                        {t('profile.vlessTroubleshootingTitle')}
+                      </div>
+                      <ul className="space-y-1 text-xs text-muted-foreground">
+                        {existingVlessHints.map((hint) => (
+                          <li key={hint}>{hint}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
               {values.type === 'remote' && (
                 <SettingItem title={t('profile.subscriptionAddress')}>
                   <Input

@@ -155,6 +155,8 @@ export async function createProfile(item: Partial<ProfileItem>): Promise<Profile
     id,
     name: item.name || (item.type === 'remote' ? 'Remote File' : 'Local File'),
     type: item.type,
+    sourceType: item.sourceType,
+    source: item.source,
     url: item.url,
     ua: item.ua,
     verify: item.verify ?? true,

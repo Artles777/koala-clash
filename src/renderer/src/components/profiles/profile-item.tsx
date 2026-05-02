@@ -1,4 +1,5 @@
 import { Button } from '@renderer/components/ui/button'
+import { Badge } from '@renderer/components/ui/badge'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,6 +18,7 @@ import EditInfoModal from './edit-info-modal'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { openFile } from '@renderer/utils/ipc'
+import { getVlessProfilePresentation } from '@renderer/utils/vless-profile-presentation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -93,6 +95,7 @@ const ProfileItem: React.FC<Props> = (props) => {
   const [disableSelect, setDisableSelect] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const updatedFromNow = dayjs(info.updated).fromNow()
+  const vlessPresentation = getVlessProfilePresentation(info)
 
   const hasLimit = total > 0
   const expired = extra?.expire ? dayjs.unix(extra.expire).isBefore(dayjs()) : false
@@ -317,9 +320,14 @@ const ProfileItem: React.FC<Props> = (props) => {
                 }}
               />
             )}
-            <h3 title={info.name} className="text-sm font-semibold truncate flex-1 leading-tight">
+            <h3 title={info.name} className="text-sm font-semibold truncate flex-1 min-w-0 leading-tight">
               {info.name}
             </h3>
+            {vlessPresentation && (
+              <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-semibold">
+                {vlessPresentation.badge}
+              </Badge>
+            )}
             <div
               className="shrink-0 -mr-1 flex items-center"
               onClick={(e) => e.stopPropagation()}
@@ -401,7 +409,12 @@ const ProfileItem: React.FC<Props> = (props) => {
                 )}
               </>
             ) : (
-              <span>{t('profile.localProfileLabel')}</span>
+              <span
+                title={vlessPresentation?.summary}
+                className={cn(vlessPresentation && 'truncate')}
+              >
+                {vlessPresentation?.summary || t('profile.localProfileLabel')}
+              </span>
             )}
           </div>
         </div>

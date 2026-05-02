@@ -20,3 +20,4 @@ export {
   updateProfileItem,
   convertMrsRuleset
 } from './profile'
+export { importVlessUri, validateVlessProfile } from './vlessImport'
