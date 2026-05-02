@@ -69,7 +69,9 @@
   - `docs/amnezia-helper-verification.md` defines the Windows, Linux, and macOS smoke matrix and release-blocking checks.
 - Added a phase 12 release packaging pipeline:
   - `src/main/runtime/amnezia-helper-artifacts.ts` validates and stages production helper artifacts into the existing `extra/files/amnezia-helper/<platform>/<arch>/` packaging layout.
-  - `scripts/amnezia-helper-artifacts.ts` exposes `pnpm amnezia-helper:prepare` and `pnpm amnezia-helper:validate`.
+  - `native/amnezia-helper/` contains the helper Go module that is built into generated artifacts.
+  - `scripts/amnezia-helper-build.ts` exposes `pnpm build:amnezia-helper` and platform aliases.
+  - `scripts/amnezia-helper-artifacts.ts` exposes `pnpm amnezia-helper:prepare` and `pnpm amnezia-helper:validate`; prepare builds helper source automatically before staging unless an external source root or `--skip-build` is used.
   - Preparation writes `extra/files/amnezia-helper/manifest.json` with platform, arch, source path, packaged path, checksum, size, and optional helper metadata.
   - Desktop build scripts now run helper artifact preparation before `electron-builder`.
   - `docs/amnezia-helper-release-packaging.md` documents the artifact contract and release validation flow.
@@ -104,7 +106,7 @@
 - Phase 9 rule packs remain app-owned. They are persisted only in `amnezia-helper-rules.yaml` and are never written back into imported Amnezia sources or Mihomo subscription/local profile files.
 - Phase 10 assumes release builds place the real helper artifact under `extra/files/amnezia-helper/<platform>/<arch>/` before packaging; the app then resolves it from packaged `resources/files/...` without user-side manual placement.
 - Phase 11 assumes the smoke workflow is run on each target desktop platform from the packaged app artifact. Cross-platform unit tests validate report structure and failure mapping, but they do not prove OS-specific packaging behavior.
-- Phase 12 assumes production helper binaries are produced by a separate helper build and placed under `helper-artifacts/amnezia-helper/<platform>/<arch>/` before app packaging.
+- Phase 12 builds production helper binaries from `native/amnezia-helper/` into ignored `helper-artifacts/amnezia-helper/<platform>/<arch>/` before app packaging.
 - Phase 13 assumes smoke reports are generated on the real target OS for each shipped desktop target. Aggregation can run anywhere after those reports are collected.
 - Phase 14 diagnostics are intentionally support-scoped. They include helper backend/session/routing/rule-pack summaries and logs, but not raw imported `vpn://` strings, generated configs, private keys, or exact helper rule domains.
 - Phase 22 formalizes real packaged validation execution, but it still depends on humans or CI agents running generated smoke commands on the actual Windows, Linux, and macOS targets with real helper artifacts and private normalized fixture profiles.
@@ -280,7 +282,9 @@ See `docs/amnezia-helper-verification.md` for the Windows, Linux, and macOS veri
 
 ## Phase 12 Release Packaging Pipeline
 
-Phase 12 adds a repeatable preparation step for production helper artifacts. Source binaries are expected at:
+Phase 12 adds a repeatable preparation step for production helper artifacts. The
+helper source lives at `native/amnezia-helper/`; generated binaries are written
+to:
 
 ```text
 helper-artifacts/amnezia-helper/<platform>/<arch>/amnezia-helper(.exe)
@@ -294,7 +298,12 @@ pnpm amnezia-helper:prepare -- --all
 pnpm amnezia-helper:validate -- --target linux-x64
 ```
 
-The `build:win`, `build:mac`, and `build:linux` scripts now run helper preparation before `electron-builder`. Missing or invalid helper artifacts fail the build before packaging. The existing runtime path resolver is unchanged.
+`pnpm build:amnezia-helper` can be used for explicit helper-only builds, but
+`pnpm amnezia-helper:prepare` already builds helper source automatically before
+staging. The `build:win`, `build:mac`, and `build:linux` scripts run helper
+preparation before `electron-builder`. Missing or invalid generated helper
+artifacts fail the build before packaging. The existing runtime path resolver is
+unchanged.
 
 See `docs/amnezia-helper-release-packaging.md` for the full artifact contract and release flow.
 

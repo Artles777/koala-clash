@@ -39,7 +39,8 @@ The JSON reports may be collected from different target machines, but keep their
 
 ## Prerequisites
 
-- Production helper artifacts are prepared by `pnpm amnezia-helper:prepare`.
+- Production helper artifacts are built from `native/amnezia-helper/` and staged
+  by `pnpm amnezia-helper:prepare`.
 - The packaged app was built for the target OS/arch.
 - A private normalized Amnezia profile fixture is available on the target machine.
 - The target machine can reach the real Amnezia endpoint used by the private fixture.

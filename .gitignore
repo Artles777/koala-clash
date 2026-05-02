@@ -3,6 +3,8 @@ resources/files
 resources/sidecar
 extra
 helper-artifacts
+native/amnezia-helper/dist
+native/amnezia-helper/bin
 dist
 out
 .DS_Store

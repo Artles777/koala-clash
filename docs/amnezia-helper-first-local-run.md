@@ -5,10 +5,12 @@ This checklist is for the first local Koala Clash run with a bundled
 
 ## Preconditions
 
-- The helper artifact is staged under
+- The helper source is present under `native/amnezia-helper/`.
+- The helper artifact is generated and staged under
   `extra/files/amnezia-helper/<platform>/<arch>/amnezia-helper(.exe)`.
 - `pnpm amnezia-helper:prepare` and `pnpm amnezia-helper:validate` pass for the
-  current platform and architecture.
+  current platform and architecture. `prepare` builds the helper first unless an
+  external source root or `--skip-build` is used.
 - `KOALA_AMNEZIA_HELPER_BACKEND_PATH` is unset unless an explicit development
   override is intended.
 - The active profile is an imported Amnezia/VPN profile backed by a

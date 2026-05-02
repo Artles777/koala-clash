@@ -1,4 +1,5 @@
 import { writeFile } from 'node:fs/promises'
+import { buildAmneziaHelperArtifacts } from './amnezia-helper-build'
 import {
   AmneziaHelperArtifactReport,
   AmneziaHelperArtifactTarget,
@@ -20,6 +21,11 @@ interface ArtifactCliOptions {
   selfCheckTimeoutMs?: number
   compact?: boolean
   help?: boolean
+  build?: boolean
+  skipBuild?: boolean
+  sourceRootExplicit?: boolean
+  buildSourceDir?: string
+  buildReportPath?: string
 }
 
 async function main(): Promise<void> {
@@ -27,6 +33,24 @@ async function main(): Promise<void> {
   if (options.help) {
     console.log(helpText)
     return
+  }
+
+  if (options.command === 'prepare' && shouldBuildBeforePrepare(options)) {
+    const buildReport = await buildAmneziaHelperArtifacts({
+      sourceDir: options.buildSourceDir,
+      outputRoot: options.sourceRoot,
+      targets: options.targets
+    })
+    if (options.buildReportPath) {
+      await writeFile(
+        options.buildReportPath,
+        `${JSON.stringify(buildReport, null, options.compact ? 0 : 2)}\n`,
+        'utf-8'
+      )
+    }
+    if (buildReport.summary.status !== 'passed') {
+      throw new Error(buildReport.summary.message)
+    }
   }
 
   const report =
@@ -58,12 +82,14 @@ async function main(): Promise<void> {
 export function parseArtifactArgs(argv: string[]): ArtifactCliOptions {
   const command = argv[0] === 'validate' || argv[0] === 'prepare' ? argv[0] : 'prepare'
   const startIndex = command === argv[0] ? 1 : 0
+  const targetSpecs: string[] = []
   const targets: AmneziaHelperArtifactTarget[] = []
   const options: ArtifactCliOptions = {
     command,
     sourceRoot: process.env.KOALA_AMNEZIA_HELPER_ARTIFACTS_DIR,
     stagingRoot: process.env.KOALA_AMNEZIA_HELPER_STAGING_DIR,
-    targets
+    targets,
+    sourceRootExplicit: Boolean(process.env.KOALA_AMNEZIA_HELPER_ARTIFACTS_DIR)
   }
   let archOverride = inferArchFromEnv()
 
@@ -78,6 +104,7 @@ export function parseArtifactArgs(argv: string[]): ArtifactCliOptions {
         break
       case '--source-root':
         options.sourceRoot = readValue(argv, ++index, arg)
+        options.sourceRootExplicit = true
         break
       case '--staging-root':
         options.stagingRoot = readValue(argv, ++index, arg)
@@ -88,10 +115,20 @@ export function parseArtifactArgs(argv: string[]): ArtifactCliOptions {
       case '--report-path':
         options.reportPath = readValue(argv, ++index, arg)
         break
+      case '--build':
+        options.build = true
+        break
+      case '--skip-build':
+        options.skipBuild = true
+        break
+      case '--build-source-dir':
+        options.buildSourceDir = readValue(argv, ++index, arg)
+        break
+      case '--build-report-path':
+        options.buildReportPath = readValue(argv, ++index, arg)
+        break
       case '--target':
-        targets.push(
-          ...normalizeAmneziaHelperArtifactTarget(readValue(argv, ++index, arg), archOverride)
-        )
+        targetSpecs.push(readValue(argv, ++index, arg))
         break
       case '--arch':
         archOverride = readValue(argv, ++index, arg)
@@ -117,12 +154,25 @@ export function parseArtifactArgs(argv: string[]): ArtifactCliOptions {
     }
   }
 
+  for (const targetSpec of targetSpecs) {
+    targets.push(...normalizeAmneziaHelperArtifactTarget(targetSpec, archOverride))
+  }
+
   if (targets.length === 0) {
     targets.push(...normalizeAmneziaHelperArtifactTarget(process.platform, archOverride))
+  }
+  if (options.build && options.skipBuild) {
+    throw new Error('Use either --build or --skip-build, not both')
   }
 
   options.targets = dedupeTargets(targets)
   return options
+}
+
+function shouldBuildBeforePrepare(options: ArtifactCliOptions): boolean {
+  if (options.skipBuild) return false
+  if (options.build) return true
+  return !options.sourceRootExplicit
 }
 
 function dedupeTargets(targets: AmneziaHelperArtifactTarget[]): AmneziaHelperArtifactTarget[] {
@@ -172,7 +222,11 @@ Usage:
   pnpm amnezia-helper:prepare -- [options]
   pnpm amnezia-helper:validate -- [options]
 
-Source artifact layout:
+Default flow:
+  prepare builds the helper from native/amnezia-helper into helper-artifacts,
+  then validates and stages it for electron-builder.
+
+Generated source artifact layout:
   helper-artifacts/amnezia-helper/<platform>/<arch>/amnezia-helper(.exe)
   helper-artifacts/amnezia-helper/<platform>/<arch>/amnezia-helper(.exe).json
 
@@ -184,6 +238,11 @@ Options:
   prepare|validate                 Command, defaults to prepare
   --source-root <path>              Source artifact root, defaults to helper-artifacts
                                    Accepts root, dist/, build/, or amnezia-helper/ layouts
+                                   Explicit source roots skip automatic build unless --build is set
+  --build                          Force helper source build before prepare
+  --skip-build                     Stage existing artifacts without building helper source
+  --build-source-dir <path>         Helper Go module, defaults to native/amnezia-helper
+  --build-report-path <path>        Write helper build report JSON before prepare report
   --staging-root <path>             Staging root, defaults to extra/files
   --target <platform[-arch]>        Target to require; repeatable
   --arch <x64|arm64>                Arch for platform-only --target values
@@ -196,6 +255,7 @@ Options:
   --compact
 
 Environment:
+  KOALA_AMNEZIA_HELPER_SOURCE_DIR
   KOALA_AMNEZIA_HELPER_ARTIFACTS_DIR
   KOALA_AMNEZIA_HELPER_STAGING_DIR
   KOALA_AMNEZIA_HELPER_TARGET_ARCH
