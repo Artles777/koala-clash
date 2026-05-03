@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { restartCore } from '../core/manager'
 import { getRuntimeConfig } from '../core/factory'
 import { mihomoHotReloadConfig } from '../core/mihomoApi'
+import { isMihomoApiUnavailableError } from '../core/mihomoApiErrors'
 import { getAppConfig } from './app'
 import { existsSync } from 'fs'
 import axios, { AxiosResponse } from 'axios'
@@ -45,7 +46,14 @@ export async function changeCurrentProfile(id: string): Promise<void> {
   try {
     const { useHotReloadProfile = true } = await getAppConfig()
     if (useHotReloadProfile) {
-      await mihomoHotReloadConfig()
+      try {
+        await mihomoHotReloadConfig()
+      } catch (error) {
+        if (!isMihomoApiUnavailableError(error)) {
+          throw error
+        }
+        await restartCore()
+      }
     } else {
       await restartCore()
     }
