@@ -72,6 +72,11 @@ const EditInfoModal: React.FC<Props> = (props) => {
     vlessInvalid && importInput.vless?.ok === false
       ? formatVlessParseErrorMessage(importInput.vless.errors[0], t)
       : undefined
+  const importInputErrorMessage =
+    vlessErrorMessage ||
+    (importInput.reason === 'unsupported_format'
+      ? t('profile.unsupportedImportInput')
+      : t('profile.invalidUrl'))
   const vlessImportPreview =
     importInput.kind === 'vless_uri' && importInput.vless?.ok === true
       ? getVlessDraftPresentation(importInput.vless.draft)
@@ -283,7 +288,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
                 </div>
                 {urlInvalid && (
                   <p className="text-xs text-destructive">
-                    {vlessErrorMessage || t('profile.invalidUrl')}
+                    {importInputErrorMessage}
                   </p>
                 )}
                 {vlessImportPreview && !urlInvalid && (

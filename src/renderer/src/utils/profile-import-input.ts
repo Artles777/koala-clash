@@ -18,6 +18,18 @@ export interface ProfileImportSubmitHandlers {
   importAmneziaKey?: (raw: string) => Promise<void>
 }
 
+export function isSupportedRemoteProfileUrl(input: string): boolean {
+  const value = input.trim()
+  if (!/^https?:\/\//i.test(value)) return false
+
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && !!url.hostname
+  } catch {
+    return false
+  }
+}
+
 export function classifyProfileImportInput(input: string): ProfileImportInputClassification {
   const value = input.trim()
 
@@ -39,13 +51,8 @@ export function classifyProfileImportInput(input: string): ProfileImportInputCla
     }
   }
 
-  try {
-    const url = new URL(value)
-    if (url.protocol === 'http:' || url.protocol === 'https:') {
-      return { kind: 'remote_url', value }
-    }
-  } catch {
-    // fall through to unsupported format
+  if (isSupportedRemoteProfileUrl(value)) {
+    return { kind: 'remote_url', value }
   }
 
   return { kind: 'invalid', value, reason: 'unsupported_format' }

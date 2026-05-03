@@ -803,6 +803,7 @@ export default {
     fileSelected: '文件已选择',
     advancedSettings: '高级设置',
     invalidUrl: '无效的链接',
+    unsupportedImportInput: '不支持的配置导入格式',
     pasteFromClipboard: '从剪贴板粘贴',
     urlPlaceholder: '输入订阅链接...',
     editSubscription: '编辑订阅',

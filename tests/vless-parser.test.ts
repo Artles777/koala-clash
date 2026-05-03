@@ -43,7 +43,7 @@ describe('VLESS URI parser', () => {
 
   it('parses REALITY over grpc with required reality fields', () => {
     const result = parseVlessUri(
-      `vless://${uuid}@reality.example:443?security=reality&type=grpc&sni=reality.example&pbk=public-key&sid=abcd&fp=chrome&serviceName=svc&authority=auth.example&flow=xtls-rprx-vision`
+      `vless://${uuid}@reality.example:443?security=reality&type=grpc&sni=reality.example&pbk=public-key&sid=abcd&spx=%2F&fp=chrome&serviceName=svc&authority=auth.example&flow=xtls-rprx-vision`
     )
 
     assert.equal(result.ok, true)
@@ -59,7 +59,8 @@ describe('VLESS URI parser', () => {
       serverName: 'reality.example',
       publicKey: 'public-key',
       shortId: 'abcd',
-      fingerprint: 'chrome'
+      fingerprint: 'chrome',
+      spiderX: '/'
     })
   })
 

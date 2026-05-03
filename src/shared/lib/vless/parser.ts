@@ -29,6 +29,9 @@ const supportedQueryParams = new Set([
   'authority',
   'pbk',
   'sid',
+  'spx',
+  'spiderX',
+  'spiderx',
   'packet-encoding',
   'packetEncoding',
   'packetencoding',
@@ -63,7 +66,6 @@ const unsupportedTransportAliases = new Set([
 const knownUnsupportedParams = new Set([
   'ech',
   'pqv',
-  'spx',
   'mldsa65verify',
   'mux',
   'smux',
@@ -283,7 +285,7 @@ function validateSecurityParams(
 ): void {
   if (security === 'none') {
     addUnsupportedSecurityParams(
-      ['sni', 'alpn', 'fp', 'insecure', 'pbk', 'sid'],
+      ['sni', 'alpn', 'fp', 'insecure', 'pbk', 'sid', 'spx', 'spiderX', 'spiderx'],
       query,
       errors,
       'security=none'
@@ -292,7 +294,12 @@ function validateSecurityParams(
   }
 
   if (security === 'tls') {
-    addUnsupportedSecurityParams(['pbk', 'sid'], query, errors, 'security=tls')
+    addUnsupportedSecurityParams(
+      ['pbk', 'sid', 'spx', 'spiderX', 'spiderx'],
+      query,
+      errors,
+      'security=tls'
+    )
     return
   }
 
@@ -422,7 +429,8 @@ function createRealityDraft(query: URLSearchParams): VlessRealityDraft {
     serverName: getParam(query, 'sni'),
     publicKey: getParam(query, 'pbk'),
     shortId: getParam(query, 'sid') || undefined,
-    fingerprint: getParam(query, 'fp') || undefined
+    fingerprint: getParam(query, 'fp') || undefined,
+    spiderX: getSpiderXParam(query) || undefined
   }
 }
 
@@ -461,6 +469,10 @@ function getPacketEncodingParam(query: URLSearchParams): string {
     getParam(query, 'packetEncoding') ||
     getParam(query, 'packetencoding')
   )
+}
+
+function getSpiderXParam(query: URLSearchParams): string {
+  return getParam(query, 'spx') || getParam(query, 'spiderX') || getParam(query, 'spiderx')
 }
 
 function normalizeToken(value: string): string {

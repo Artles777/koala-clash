@@ -54,7 +54,8 @@ export function createVlessMihomoProfile(draft: VlessDraft): VlessMihomoProfile 
     if (draft.reality.fingerprint) proxy['client-fingerprint'] = draft.reality.fingerprint
     proxy['reality-opts'] = {
       'public-key': draft.reality.publicKey,
-      ...(draft.reality.shortId ? { 'short-id': draft.reality.shortId } : {})
+      ...(draft.reality.shortId ? { 'short-id': draft.reality.shortId } : {}),
+      ...(draft.reality.spiderX ? { 'spider-x': draft.reality.spiderX } : {})
     }
   }
 

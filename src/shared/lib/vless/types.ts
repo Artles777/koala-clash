@@ -22,6 +22,7 @@ export interface VlessRealityDraft {
   publicKey: string
   shortId?: string
   fingerprint?: string
+  spiderX?: string
 }
 
 export type VlessTransportDraft =

@@ -62,7 +62,7 @@ describe('VLESS draft to Mihomo profile mapping', () => {
 
   it('maps reality fields into Mihomo reality-opts', () => {
     const draft = parseDraft(
-      `vless://${uuid}@reality.example:443?security=reality&sni=reality.example&pbk=public-key&sid=abcd&fp=chrome&flow=xtls-rprx-vision`
+      `vless://${uuid}@reality.example:443?security=reality&sni=reality.example&pbk=public-key&sid=abcd&spx=%2F&fp=chrome&flow=xtls-rprx-vision`
     )
     const proxy = createVlessMihomoProfile(draft).config.proxies[0]
 
@@ -72,7 +72,8 @@ describe('VLESS draft to Mihomo profile mapping', () => {
     assert.equal(proxy.flow, 'xtls-rprx-vision')
     assert.deepEqual(proxy['reality-opts'], {
       'public-key': 'public-key',
-      'short-id': 'abcd'
+      'short-id': 'abcd',
+      'spider-x': '/'
     })
   })
 
@@ -141,7 +142,7 @@ describe('VLESS draft to Mihomo profile mapping', () => {
       `vless://${uuid}@edge.example:443?packet-encoding=xudp&security=tls&sni=edge.example`,
       `vless://${uuid}@edge.example:443?type=httpupgrade&path=%2Fupgrade&host=cdn.edge&security=tls&sni=edge.example`,
       `vless://${uuid}@edge.example:443?type=xhttp&path=%2F&host=cdn.edge&mode=auto&security=tls&sni=edge.example&alpn=h2`,
-      `vless://${uuid}@edge.example:443?type=xhttp&path=%2F&host=cdn.edge&mode=auto&security=reality&sni=edge.example&pbk=SpxcrfbxTSrm_Ho06GdQcjCiO6Vwzo-WS3cVYlyNTQg&fp=chrome`
+      `vless://${uuid}@edge.example:443?type=xhttp&path=%2F&host=cdn.edge&mode=auto&security=reality&sni=edge.example&pbk=SpxcrfbxTSrm_Ho06GdQcjCiO6Vwzo-WS3cVYlyNTQg&spx=%2F&fp=chrome`
     ]
 
     for (const uri of fixtures) {

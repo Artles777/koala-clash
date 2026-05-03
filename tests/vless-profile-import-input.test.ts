@@ -2,6 +2,7 @@ import * as assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   classifyProfileImportInput,
+  isSupportedRemoteProfileUrl,
   submitProfileImportInput
 } from '../src/renderer/src/utils/profile-import-input'
 
@@ -11,6 +12,25 @@ describe('profile import input classification', () => {
   it('keeps http and https subscription URLs routed as remote_url', () => {
     assert.equal(classifyProfileImportInput('http://example.com/sub.yaml').kind, 'remote_url')
     assert.equal(classifyProfileImportInput('https://example.com/sub.yaml').kind, 'remote_url')
+  })
+
+  it('accepts http and https subscription URLs regardless of TLD', () => {
+    const ru = classifyProfileImportInput('https://bot.xxxxx.ru/xxx_sub/yyyy/ddddd')
+    const com = classifyProfileImportInput('https://bot.xxxxx.com/xxx_sub/yyyy/ddddd')
+
+    assert.equal(ru.kind, 'remote_url')
+    assert.equal(ru.value, 'https://bot.xxxxx.ru/xxx_sub/yyyy/ddddd')
+    assert.equal(com.kind, 'remote_url')
+    assert.equal(com.value, 'https://bot.xxxxx.com/xxx_sub/yyyy/ddddd')
+  })
+
+  it('validates remote subscription URLs by http(s) scheme without TLD allowlists', () => {
+    assert.equal(isSupportedRemoteProfileUrl('https://bot.xxxxx.ru/xxx_sub/yyyy/ddddd'), true)
+    assert.equal(isSupportedRemoteProfileUrl('https://bot.xxxxx.com/xxx_sub/yyyy/ddddd'), true)
+    assert.equal(isSupportedRemoteProfileUrl('http://localhost:7890/sub'), true)
+    assert.equal(isSupportedRemoteProfileUrl('ftp://example.ru/config.yaml'), false)
+    assert.equal(isSupportedRemoteProfileUrl('https://'), false)
+    assert.equal(isSupportedRemoteProfileUrl('not a URL'), false)
   })
 
   it('keeps vpn:// routed as amnezia_key without touching Amnezia flows', () => {
