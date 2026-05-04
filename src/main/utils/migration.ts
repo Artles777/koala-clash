@@ -1,6 +1,6 @@
 import { existsSync } from 'fs'
 import { readFile, writeFile } from 'fs/promises'
-import path from 'path'
+import * as path from 'path'
 import { app } from 'electron'
 import { dataDir, logPath } from './dirs'
 import { parseYaml } from './yaml'

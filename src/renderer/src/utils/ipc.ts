@@ -155,7 +155,7 @@ export async function changeCurrentProfile(id: string): Promise<void> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('changeCurrentProfile', id))
 }
 
-export async function addProfileItem(item: Partial<ProfileItem>): Promise<void> {
+export async function addProfileItem(item: Partial<ProfileItem>): Promise<ProfileItem> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('addProfileItem', item))
 }
 
@@ -167,6 +167,170 @@ export async function validateVlessProfile(
   id: string
 ): Promise<{ profileId: string; checkedAt: number }> {
   return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('validateVlessProfile', id))
+}
+
+export async function importAmneziaKey(raw: string): Promise<ProfileItem> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('importAmneziaKey', raw))
+}
+
+export async function getAmneziaProfileDetails(id: string): Promise<AmneziaProfileDetails> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('getAmneziaProfileDetails', id))
+}
+
+export async function getAmneziaHelperRules(): Promise<AmneziaHelperRule[]> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('getAmneziaHelperRules'))
+}
+
+export async function getAmneziaHelperRulePacks(): Promise<AmneziaHelperRulePack[]> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('getAmneziaHelperRulePacks'))
+}
+
+export async function addAmneziaHelperRulePack(
+  input: AmneziaHelperRulePackInput
+): Promise<AmneziaHelperRulePack> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('addAmneziaHelperRulePack', input)
+  )
+}
+
+export async function updateAmneziaHelperRulePack(
+  id: string,
+  patch: AmneziaHelperRulePackPatch
+): Promise<AmneziaHelperRulePack> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('updateAmneziaHelperRulePack', id, patch)
+  )
+}
+
+export async function addAmneziaHelperRule(
+  input: AmneziaHelperRuleInput
+): Promise<AmneziaHelperRule> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('addAmneziaHelperRule', input))
+}
+
+export async function updateAmneziaHelperRule(
+  id: string,
+  patch: AmneziaHelperRulePatch
+): Promise<AmneziaHelperRule> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('updateAmneziaHelperRule', id, patch)
+  )
+}
+
+export async function removeAmneziaHelperRule(id: string): Promise<void> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('removeAmneziaHelperRule', id))
+}
+
+export async function bulkAddAmneziaHelperRules(
+  input: AmneziaHelperRuleBulkInput
+): Promise<AmneziaHelperRuleBulkResult> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('bulkAddAmneziaHelperRules', input)
+  )
+}
+
+export async function exportAmneziaHelperRulePacks(): Promise<string> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('exportAmneziaHelperRulePacks'))
+}
+
+export async function importAmneziaHelperRulePacks(
+  content: string
+): Promise<AmneziaHelperRulePackImportResult> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('importAmneziaHelperRulePacks', content)
+  )
+}
+
+export async function startAmneziaHelper(id: string): Promise<AmneziaHelperSession> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('startAmneziaHelper', id))
+}
+
+export async function stopAmneziaHelper(id?: string): Promise<AmneziaHelperSession> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('stopAmneziaHelper', id))
+}
+
+export async function getAmneziaHelperStatus(id?: string): Promise<AmneziaHelperSession> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('getAmneziaHelperStatus', id))
+}
+
+export async function getAmneziaHelperStartupPreflight(
+  id: string
+): Promise<AmneziaHelperStartupPreflightResult> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('getAmneziaHelperStartupPreflight', id)
+  )
+}
+
+export async function getAmneziaHelperLogs(id?: string): Promise<AmneziaHelperLogEntry[]> {
+  return ipcErrorWrapper(await window.electron.ipcRenderer.invoke('getAmneziaHelperLogs', id))
+}
+
+export async function evaluateAmneziaHelperRouting(
+  input: AmneziaHelperRoutingDiagnosticInput
+): Promise<AmneziaHelperRoutingDiagnosticResult> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('evaluateAmneziaHelperRouting', input)
+  )
+}
+
+export async function validateAmneziaHelperConnectivity(
+  id: string
+): Promise<AmneziaHelperConnectivityResult> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('validateAmneziaHelperConnectivity', id)
+  )
+}
+
+export async function getLastAmneziaHelperConnectivityResult(
+  id?: string
+): Promise<AmneziaHelperConnectivityResult | undefined> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('getLastAmneziaHelperConnectivityResult', id)
+  )
+}
+
+export async function getAmneziaHelperSupportSnapshot(
+  id?: string
+): Promise<AmneziaHelperDiagnosticsBundle> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('getAmneziaHelperSupportSnapshot', id)
+  )
+}
+
+export async function runRealtimePresetValidation(
+  id: string,
+  presetId?: string
+): Promise<RealtimePresetValidationEvidence> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('runRealtimePresetValidation', id, presetId)
+  )
+}
+
+export async function runRealtimePresetSmoke(
+  id: string,
+  presetId?: string
+): Promise<RealtimePresetValidationEvidence> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('runRealtimePresetSmoke', id, presetId)
+  )
+}
+
+export async function confirmRealtimePresetValidation(
+  id: string,
+  note?: string,
+  presetId?: string
+): Promise<RealtimePresetValidationEvidence> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('confirmRealtimePresetValidation', id, note, presetId)
+  )
+}
+
+export async function exportAmneziaHelperDiagnosticsBundle(
+  id?: string
+): Promise<AmneziaHelperDiagnosticsExportResult> {
+  return ipcErrorWrapper(
+    await window.electron.ipcRenderer.invoke('exportAmneziaHelperDiagnosticsBundle', id)
+  )
 }
 
 export async function removeProfileItem(id: string): Promise<void> {

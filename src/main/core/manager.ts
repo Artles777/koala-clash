@@ -33,13 +33,15 @@ import {
 import { readFile, rm, writeFile } from 'fs/promises'
 import { promisify } from 'util'
 import { mainWindow, showError } from '..'
-import path from 'path'
-import os from 'os'
+import * as path from 'path'
+import * as os from 'os'
 import { createWriteStream, existsSync } from 'fs'
 import { disableSysProxy, triggerSysProxy } from '../sys/sysproxy'
 import { getAxios } from './mihomoApi'
 import { setSysDns } from '../service/api'
 import { t } from '../utils/i18n'
+import { clearActiveMihomoIpcPath, setActiveMihomoIpcPath } from './mihomoIpcState'
+import { execWithElevation } from '../utils/elevation'
 
 const ctlParam = process.platform === 'win32' ? '-ext-ctl-pipe' : '-ext-ctl-unix'
 
@@ -77,9 +79,7 @@ let providerNames = new Set<string>()
 let unmatchedProviders = new Set<string>()
 
 const normalize = (s: string): string =>
-  s
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
-    .normalize('NFC')
+  s.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).normalize('NFC')
 
 export async function resetProviderTracking(): Promise<void> {
   const { 'rule-providers': ruleProviders, 'proxy-providers': proxyProviders } =
@@ -118,9 +118,13 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
     throw error
   }
 
+  const launchWorkDir = diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir()
+  const ipcPath = mihomoIpcPath()
+
   await generateProfile()
   await checkProfile()
   await stopCore()
+  await stopConflictingCoreProcesses(launchWorkDir, ipcPath)
   if (tun?.enable && autoSetDNSMode !== 'none') {
     try {
       await setPublicDNS()
@@ -141,20 +145,18 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
     SAFE_PATHS: safePaths.join(path.delimiter),
     PATH: process.env.PATH
   }
-  child = spawn(
-    corePath,
-    [
-      '-d',
-      diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir(),
-      ctlParam,
-      mihomoIpcPath()
-    ],
-    {
-      detached: detached,
-      stdio: detached ? 'ignore' : undefined,
-      env: env
-    }
-  )
+  child = spawn(corePath, ['-d', launchWorkDir, ctlParam, ipcPath], {
+    detached: detached,
+    stdio: detached ? 'ignore' : undefined,
+    env: env
+  })
+  const childPid = child.pid
+  if (childPid) {
+    await writeFile(path.join(dataDir(), 'core.pid'), childPid.toString()).catch(async (error) => {
+      await writeFile(logPath(), `[Manager]: write core pid failed, ${error}\n`, { flag: 'a' })
+    })
+  }
+  setActiveMihomoIpcPath(ipcPath)
   if (process.platform === 'win32' && child.pid) {
     os.setPriority(child.pid, os.constants.priority[mihomoCpuPriority])
   }
@@ -165,6 +167,8 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
     })
   }
   child.on('close', async (code, signal) => {
+    clearActiveMihomoIpcPath(ipcPath)
+    await removeCorePidIfMatches(childPid)
     await writeFile(logPath(), `[Manager]: Core closed, code: ${code}, signal: ${signal}\n`, {
       flag: 'a'
     })
@@ -253,7 +257,10 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
                   new Promise((r) => setTimeout(r, 100)).then(() =>
                     patchMihomoConfig({ 'log-level': logLevel })
                   )
-                ]).then(() => resolve())
+                ]).then(() => {
+                  void syncCurrentAmneziaHelperAfterCoreStart()
+                  resolve()
+                })
               }
             }
             child.stdout?.on('data', (data) => {
@@ -274,6 +281,13 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
 }
 
 export async function stopCore(force = false): Promise<void> {
+  const { stopNativeProcessBypass } = await import('../runtime/native-process-bypass')
+  await stopNativeProcessBypass().catch(async (error) => {
+    await writeFile(logPath(), `[Manager]: native process bypass cleanup failed, ${error}\n`, {
+      flag: 'a'
+    })
+  })
+
   try {
     if (!force) {
       await recoverDNS()
@@ -293,6 +307,7 @@ export async function stopCore(force = false): Promise<void> {
     await stopChildProcess(child)
     child = undefined as unknown as ChildProcess
   }
+  clearActiveMihomoIpcPath()
 
   await getAxios(true).catch(() => {})
 
@@ -315,6 +330,88 @@ export async function stopCore(force = false): Promise<void> {
       }
     }
     await rm(path.join(dataDir(), 'core.pid')).catch(() => {})
+  }
+}
+
+async function stopConflictingCoreProcesses(workDir: string, ipcPath: string): Promise<void> {
+  if (process.platform === 'win32') return
+
+  const execFilePromise = promisify(execFile)
+
+  try {
+    const { stdout } = await execFilePromise('ps', ['-axo', 'pid=,command='])
+    const candidates = stdout
+      .split('\n')
+      .map((line) => {
+        const match = line.match(/^\s*(\d+)\s+(.+)$/)
+        if (!match) return null
+        return { pid: Number(match[1]), command: match[2] }
+      })
+      .filter((entry): entry is { pid: number; command: string } => {
+        if (!entry || entry.pid === process.pid || entry.pid === child?.pid) return false
+        const isMihomo = /(?:^|\/)mihomo(?:-alpha)?(?:\s|$)/.test(entry.command)
+        return (
+          isMihomo && entry.command.includes(`-d ${workDir}`) && entry.command.includes(ipcPath)
+        )
+      })
+
+    for (const candidate of candidates) {
+      await writeFile(
+        logPath(),
+        `[Manager]: Stopping conflicting Mihomo process ${candidate.pid}: ${candidate.command}\n`,
+        { flag: 'a' }
+      )
+      await stopProcessByPid(candidate.pid)
+    }
+  } catch (error) {
+    await writeFile(logPath(), `[Manager]: conflicting core cleanup failed, ${error}\n`, {
+      flag: 'a'
+    })
+  }
+}
+
+async function stopProcessByPid(pid: number): Promise<void> {
+  const signal = async (value: NodeJS.Signals): Promise<boolean> => {
+    try {
+      process.kill(pid, value)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  if (!(await signal('SIGINT'))) return
+  await new Promise((resolve) => setTimeout(resolve, 500))
+
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return
+  }
+
+  await signal('SIGTERM')
+  await new Promise((resolve) => setTimeout(resolve, 1000))
+
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return
+  }
+
+  await signal('SIGKILL')
+}
+
+async function removeCorePidIfMatches(pid: number | undefined): Promise<void> {
+  if (!pid) return
+  const pidPath = path.join(dataDir(), 'core.pid')
+  if (!existsSync(pidPath)) return
+  try {
+    const pidString = await readFile(pidPath, 'utf-8')
+    if (parseInt(pidString.trim()) === pid) {
+      await rm(pidPath, { force: true })
+    }
+  } catch {
+    // ignore stale or unreadable pid files
   }
 }
 
@@ -410,8 +507,28 @@ export async function keepCoreAlive(): Promise<void> {
   }
 }
 
+async function syncCurrentAmneziaHelperAfterCoreStart(): Promise<void> {
+  try {
+    const { syncCurrentAmneziaHelperWithRuntimeMode } =
+      await import('../runtime/amnezia-helper-manager')
+    await syncCurrentAmneziaHelperWithRuntimeMode()
+  } catch (error) {
+    await writeFile(logPath(), `[Manager]: sync Amnezia helper failed, ${error}\n`, {
+      flag: 'a'
+    })
+  }
+}
+
 export async function quitWithoutCore(): Promise<void> {
   await keepCoreAlive()
+  const { stopAllAmneziaHelpers } = await import('../runtime/amnezia-helper-manager')
+  await stopAllAmneziaHelpers('app_shutdown')
+  const { stopNativeProcessBypass } = await import('../runtime/native-process-bypass')
+  await stopNativeProcessBypass().catch(async (error) => {
+    await writeFile(logPath(), `[Manager]: native process bypass cleanup failed, ${error}\n`, {
+      flag: 'a'
+    })
+  })
   app.exit()
 }
 
@@ -458,16 +575,20 @@ export async function manualGrantCorePermition(
     const corePath = mihomoCorePath(coreName)
     try {
       if (process.platform === 'darwin') {
-        const escapedPath = corePath.replace(/"/g, '\\"')
-        const shell = `chown root:admin \\"${escapedPath}\\" && chmod +sx \\"${escapedPath}\\"`
-        const command = `do shell script "${shell}" with administrator privileges`
-        await execFilePromise('osascript', ['-e', command])
+        await execWithElevation('/bin/sh', [
+          '-c',
+          'chown root:admin "$1" && chmod +sx "$1"',
+          'koala-core-permission',
+          corePath
+        ])
       }
       if (process.platform === 'linux') {
         await execFilePromise('pkexec', [
           'bash',
           '-c',
-          `chown root:root "${corePath}" && chmod +sx "${corePath}"`
+          'chown root:root "$1" && chmod +sx "$1"',
+          'koala-core-permission',
+          corePath
         ])
       }
     } catch (error) {

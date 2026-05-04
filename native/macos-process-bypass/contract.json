@@ -1,0 +1,61 @@
+{
+  "component": "koala-macos-process-bypass",
+  "controllerName": "koala-macos-process-bypassctl",
+  "providerBundleIdentifier": "com.koalaclash.processbypass.transparent-proxy",
+  "providerStrategy": "NETransparentProxyProvider",
+  "commands": ["status", "apply", "cleanup"],
+  "koalaLaunchContract": {
+    "status": ["status", "--json"],
+    "apply": [
+      "apply",
+      "--session",
+      "<session-id>",
+      "--json",
+      "--process-name",
+      "<exact-process-name>"
+    ],
+    "cleanup": ["cleanup", "--session", "<session-id>", "--json"]
+  },
+  "jsonFields": [
+    "ok",
+    "available",
+    "entitlementsPresent",
+    "extensionInstalled",
+    "userApprovalRequired",
+    "dataPlaneActive",
+    "fallbackOnly",
+    "activeSessionId",
+    "reasonCode",
+    "message",
+    "diagnostics",
+    "appliedProcessNames",
+    "provider",
+    "providerBundleIdentifier"
+  ],
+  "dataPlaneActiveRequires": [
+    "Developer ID signed host app",
+    "com.apple.developer.system-extension.install entitlement on the host app",
+    "com.apple.developer.networking.networkextension entitlement with app-proxy-provider-systemextension",
+    "Network/System Extension bundle installed",
+    "user approved the System Extension",
+    "transparent proxy rules installed and enabled",
+    "provider confirms per-process flow policy is active"
+  ],
+  "reasonCodes": [
+    "macos_entitlements_missing",
+    "macos_extension_not_installed",
+    "macos_user_approval_required",
+    "macos_data_plane_pending",
+    "macos_data_plane_active",
+    "macos_apply_failed",
+    "macos_cleanup_failed",
+    "macos_cleanup_complete",
+    "no_process_names",
+    "invalid_arguments"
+  ],
+  "currentTruth": {
+    "dataPlaneActive": false,
+    "fallbackOnly": true,
+    "note": "This scaffold does not make Koala claim true native macOS process bypass."
+  }
+}

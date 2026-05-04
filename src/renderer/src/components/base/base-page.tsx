@@ -4,8 +4,17 @@ import WindowControls from '@renderer/components/window-controls'
 import React, { forwardRef, useImperativeHandle, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ChevronLeft } from 'lucide-react'
+import { cn } from '@renderer/lib/utils'
 
-const sidebarPaths = new Set(['/home', '/profiles', '/proxies', '/connections', '/rules', '/logs', '/settings'])
+const sidebarPaths = new Set([
+  '/home',
+  '/profiles',
+  '/proxies',
+  '/connections',
+  '/rules',
+  '/logs',
+  '/settings'
+])
 const isMac = platform === 'darwin'
 
 interface Props {
@@ -13,6 +22,7 @@ interface Props {
   header?: React.ReactNode
   children?: React.ReactNode
   contentClassName?: string
+  contentRef?: React.Ref<HTMLDivElement>
   showBackButton?: boolean
 }
 
@@ -21,13 +31,13 @@ const BasePage = forwardRef<HTMLDivElement, Props>((props, ref) => {
   const navigate = useNavigate()
   const isSubPage = !sidebarPaths.has(location.pathname)
 
-  const contentRef = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   useImperativeHandle(ref, () => {
-    return contentRef.current as HTMLDivElement
+    return rootRef.current as HTMLDivElement
   })
 
   return (
-    <div ref={contentRef} className="w-full h-full">
+    <div ref={rootRef} className="w-full h-full">
       <div className="sticky top-0 z-40 h-14.25 w-full">
         <div className="app-drag px-2 pt-3 pb-2 flex justify-between h-14.25">
           <div className="title h-full text-lg leading-8 flex items-center gap-1">
@@ -49,7 +59,13 @@ const BasePage = forwardRef<HTMLDivElement, Props>((props, ref) => {
           </div>
         </div>
       </div>
-      <div className="content h-[calc(100vh-57px)] overflow-y-auto custom-scrollbar">
+      <div
+        ref={props.contentRef}
+        className={cn(
+          'content h-[calc(100vh-57px)] overflow-y-auto custom-scrollbar',
+          props.contentClassName
+        )}
+      >
         {props.children}
       </div>
     </div>

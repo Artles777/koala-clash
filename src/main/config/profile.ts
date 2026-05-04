@@ -1,4 +1,10 @@
-import { mihomoProfileWorkDir, mihomoWorkDir, profileConfigPath, profilePath, rulePath } from '../utils/dirs'
+import {
+  mihomoProfileWorkDir,
+  mihomoWorkDir,
+  profileConfigPath,
+  profilePath,
+  rulePath
+} from '../utils/dirs'
 import { mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { restartCore } from '../core/manager'
 import { getRuntimeConfig } from '../core/factory'
@@ -15,6 +21,11 @@ import { deepMerge } from '../utils/merge'
 import { getUserAgent } from '../utils/userAgent'
 import { getHWID, getDeviceOS, getOSVersion, getDeviceModel } from '../utils/deviceInfo'
 import { t } from '../utils/i18n'
+import {
+  createMihomoManagedProfileFields,
+  getProfileRuntimeCapabilities,
+  upgradeProfileConfigForManagedProfiles
+} from '../../core/profiles/managed-profile'
 
 let profileConfig: ProfileConfig // profile.yaml
 
@@ -24,22 +35,33 @@ export async function getProfileConfig(force = false): Promise<ProfileConfig> {
     profileConfig = parseYaml(data) || { items: [] }
   }
   if (typeof profileConfig !== 'object') profileConfig = { items: [] }
+  const upgraded = upgradeProfileConfigForManagedProfiles(profileConfig)
+  if (upgraded.changed) {
+    profileConfig = upgraded.config as ProfileConfig
+    await writeFile(profileConfigPath(), stringifyYaml(profileConfig), 'utf-8')
+  }
   return profileConfig
 }
 
 export async function setProfileConfig(config: ProfileConfig): Promise<void> {
-  profileConfig = config
-  await writeFile(profileConfigPath(), stringifyYaml(config), 'utf-8')
+  const upgraded = upgradeProfileConfigForManagedProfiles(config)
+  profileConfig = upgraded.config as ProfileConfig
+  await writeFile(profileConfigPath(), stringifyYaml(profileConfig), 'utf-8')
 }
 
 export async function getProfileItem(id: string | undefined): Promise<ProfileItem | undefined> {
   const { items } = await getProfileConfig()
-  if (!id || id === 'default') return { id: 'default', type: 'local', name: t('ui.blankSubscription') }
+  if (!id || id === 'default')
+    return { id: 'default', type: 'local', name: t('ui.blankSubscription') }
   return items?.find((item) => item.id === id)
 }
 
 export async function changeCurrentProfile(id: string): Promise<void> {
   const config = await getProfileConfig()
+  const item = config.items?.find((profileItem) => profileItem.id === id)
+  if (item && !getProfileRuntimeCapabilities(item).canActivate) {
+    throw new Error('Profile runtime is not supported yet')
+  }
   const current = config.current
   config.current = id
   await setProfileConfig(config)
@@ -57,11 +79,22 @@ export async function changeCurrentProfile(id: string): Promise<void> {
     } else {
       await restartCore()
     }
+    await ensureCurrentAmneziaHelperRunningBestEffort()
   } catch (e) {
     config.current = current
     throw e
   } finally {
     await setProfileConfig(config)
+  }
+}
+
+async function ensureCurrentAmneziaHelperRunningBestEffort(): Promise<void> {
+  try {
+    const { syncCurrentAmneziaHelperWithRuntimeMode } =
+      await import('../runtime/amnezia-helper-manager')
+    await syncCurrentAmneziaHelperWithRuntimeMode()
+  } catch (error) {
+    console.warn('[amnezia-helper] failed to auto-start current helper', error)
   }
 }
 
@@ -75,10 +108,12 @@ export async function updateProfileItem(item: ProfileItem): Promise<void> {
   await setProfileConfig(config)
 }
 
-export async function addProfileItem(item: Partial<ProfileItem>): Promise<void> {
+export async function addProfileItem(item: Partial<ProfileItem>): Promise<ProfileItem> {
   if (item.url && item.type === 'remote') {
     const config = await getProfileConfig()
-    const duplicate = config.items?.find((existing) => existing.url === item.url && existing.id !== item.id)
+    const duplicate = config.items?.find(
+      (existing) => existing.url === item.url && existing.id !== item.id
+    )
     if (duplicate) {
       throw new Error(t('error.duplicateProfile'))
     }
@@ -97,6 +132,8 @@ export async function addProfileItem(item: Partial<ProfileItem>): Promise<void> 
   if (!isExisting || !config.current) {
     await changeCurrentProfile(newItem.id)
   }
+
+  return newItem
 }
 
 export async function removeProfileItem(id: string): Promise<void> {
@@ -105,11 +142,9 @@ export async function removeProfileItem(id: string): Promise<void> {
   let shouldRestart = false
   if (config.current === id) {
     shouldRestart = true
-    if (config.items && config.items.length > 0) {
-      config.current = config.items[0].id
-    } else {
-      config.current = undefined
-    }
+    config.current = config.items?.find(
+      (item) => getProfileRuntimeCapabilities(item).canActivate
+    )?.id
   }
   await setProfileConfig(config)
   if (existsSync(profilePath(id))) {
@@ -134,7 +169,13 @@ export async function removeProfileItem(id: string): Promise<void> {
 
 export async function getCurrentProfileItem(): Promise<ProfileItem> {
   const { current } = await getProfileConfig()
-  return (await getProfileItem(current)) || { id: 'default', type: 'local', name: t('ui.blankSubscription') }
+  return (
+    (await getProfileItem(current)) || {
+      id: 'default',
+      type: 'local',
+      name: t('ui.blankSubscription')
+    }
+  )
 }
 
 async function downloadLogoAsBase64(
@@ -171,7 +212,8 @@ export async function createProfile(item: Partial<ProfileItem>): Promise<Profile
     autoUpdate: item.autoUpdate ?? true,
     interval: item.interval || 0,
     useProxy: item.useProxy || false,
-    updated: new Date().getTime()
+    updated: new Date().getTime(),
+    ...createMihomoManagedProfileFields(item.type || 'local')
   } as ProfileItem
   switch (newItem.type) {
     case 'remote': {
@@ -212,7 +254,6 @@ export async function createProfile(item: Partial<ProfileItem>): Promise<Profile
         }
         throw error
       }
-
 
       const data = res.data
       const headers = res.headers
@@ -269,9 +310,7 @@ export async function createProfile(item: Partial<ProfileItem>): Promise<Profile
       if (userinfoKey) {
         newItem.extra = parseSubinfo(headers[userinfoKey])
       }
-      const logoKey = Object.keys(headers).find((k) =>
-        k.toLowerCase().endsWith('profile-logo')
-      )
+      const logoKey = Object.keys(headers).find((k) => k.toLowerCase().endsWith('profile-logo'))
       if (logoKey) {
         const logoUrl = headers[logoKey]
         const proxyConfig =
@@ -287,9 +326,7 @@ export async function createProfile(item: Partial<ProfileItem>): Promise<Profile
       if (supportUrlKey) {
         newItem.supportUrl = headers[supportUrlKey]
       }
-      const announceKey = Object.keys(headers).find((k) =>
-        k.toLowerCase().endsWith('announce')
-      )
+      const announceKey = Object.keys(headers).find((k) => k.toLowerCase().endsWith('announce'))
       if (announceKey) {
         const announceValue = headers[announceKey]
         const decoded = announceValue.startsWith('base64:')

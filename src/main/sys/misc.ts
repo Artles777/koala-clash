@@ -1,7 +1,7 @@
 import { exec, execFile, execSync, spawn } from 'child_process'
 import { app, dialog, nativeTheme, shell } from 'electron'
 import { readFile } from 'fs/promises'
-import path from 'path'
+import * as path from 'path'
 import { promisify } from 'util'
 import {
   dataDir,

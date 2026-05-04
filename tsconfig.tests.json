@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.node.json",
+  "include": [
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    "src/main/**/*",
+    "src/core/**/*",
+    "src/features/**/*",
+    "src/shared/**/*.ts",
+    "src/shared/**/*.d.ts",
+    "src/preload/index.d.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "types": ["electron-vite/node", "node"]
+  }
+}

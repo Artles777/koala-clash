@@ -4,7 +4,7 @@ import { mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { execFile } from 'child_process'
 import { existsSync } from 'fs'
 import { promisify } from 'util'
-import path from 'path'
+import * as path from 'path'
 
 const appName = 'koala-clash'
 

@@ -5,16 +5,42 @@ import {
   getProfileStr,
   getAppConfig
 } from '../config'
-import {
-  mihomoProfileWorkDir,
-  mihomoWorkConfigPath,
-  mihomoWorkDir, rulePath
-} from '../utils/dirs'
+import { mihomoProfileWorkDir, mihomoWorkConfigPath, mihomoWorkDir, rulePath } from '../utils/dirs'
 import { parseYaml, stringifyYaml } from '../utils/yaml'
 import { copyFile, mkdir, readFile, writeFile } from 'fs/promises'
 import { deepMerge } from '../utils/merge'
 import { existsSync } from 'fs'
-import path from 'path'
+import * as path from 'path'
+import { injectAmneziaHelperRoutingTarget } from '../../core/routing/amnezia-helper-routing'
+import {
+  ensureAmneziaCompatibilityFallbackRule,
+  ensureAmneziaCompatibilityProxyGroup,
+  injectAmneziaCompatibilityTcpOnlyUdpGuardRules
+} from '../../core/routing/amnezia-compatibility-proxy-group'
+import { getActiveAmneziaHelperRoutingTarget } from '../runtime/amnezia-helper-routing-state'
+import { injectAmneziaHelperRules } from '../../core/routing/amnezia-helper-rules'
+import { getAmneziaHelperRules } from '../config/amneziaHelperRules'
+import { injectAmneziaHelperTunBypass } from '../../core/routing/amnezia-helper-tun-bypass'
+import { getActiveAmneziaHelperTunBypass } from '../runtime/amnezia-helper-tun-bypass-state'
+import { ensureAmneziaTunRuntimeCompatibility } from '../../core/routing/amnezia-tun-runtime-compatibility'
+import {
+  ensureMihomoRuleProviderPresets,
+  pinKoalaRuBundleRulesLast
+} from '../../core/routing/mihomo-rule-provider-presets'
+import { injectDirectTunBypass, parseDirectRules } from '../../core/routing/direct-tun-bypass'
+import { resolveRuntimeDirectTunBypass } from '../runtime/direct-tun-bypass-resolver'
+import { updateDirectTunBypassState } from '../runtime/direct-tun-bypass-state'
+import {
+  injectLearnedProcessBypass,
+  resolveLearnedProcessBypass
+} from '../../core/routing/learned-process-bypass'
+import { evaluateBypassCapabilities } from '../../core/routing/bypass-capabilities'
+import {
+  getObservedProcessBypassEntries,
+  updateLearnedProcessBypassState
+} from '../runtime/learned-process-bypass-state'
+import { syncNativeProcessBypass } from '../runtime/native-process-bypass'
+import { updateBypassCapabilityState } from '../runtime/bypass-capability-state'
 
 let runtimeConfigStr: string,
   rawProfileStr: string,
@@ -53,7 +79,11 @@ function processRulesWithOffset(ruleStrings: string[], currentRules: string[], i
 }
 
 export async function generateProfile(): Promise<void> {
-  const { current } = await getProfileConfig()
+  const profileConfig = await getProfileConfig()
+  const { current } = profileConfig
+  const currentProfileItem = profileConfig.items?.find((item) => item.id === current)
+  const currentIsAmneziaProfile =
+    currentProfileItem?.profileKind === 'amnezia' || currentProfileItem?.compatibility === 'amnezia'
   const appConfig = await getAppConfig()
   const {
     diffWorkDir = false,
@@ -125,11 +155,72 @@ export async function generateProfile(): Promise<void> {
         })
       }
 
+      rules = pinKoalaRuBundleRulesLast(rules)
       currentProfile.rules = rules as unknown as []
     }
   }
 
-  const profile = deepMerge(JSON.parse(JSON.stringify(currentProfile)), configToMerge)
+  let profile = deepMerge(JSON.parse(JSON.stringify(currentProfile)), configToMerge)
+  if (currentIsAmneziaProfile) {
+    profile = ensureAmneziaCompatibilityProxyGroup(profile)
+  }
+  const helperRoutingResult = injectAmneziaHelperRoutingTarget(
+    profile,
+    getActiveAmneziaHelperRoutingTarget()
+  )
+  profile = helperRoutingResult.config as MihomoConfig
+  if (currentIsAmneziaProfile && helperRoutingResult.injected) {
+    profile = ensureAmneziaCompatibilityProxyGroup(profile, helperRoutingResult.target)
+  }
+  if (currentIsAmneziaProfile) {
+    profile = ensureAmneziaCompatibilityFallbackRule(profile, helperRoutingResult.target)
+  }
+  if (helperRoutingResult.injected) {
+    profile = injectAmneziaHelperRules(
+      profile,
+      helperRoutingResult.target,
+      await getAmneziaHelperRules()
+    ).config as MihomoConfig
+  }
+  if (currentIsAmneziaProfile) {
+    profile = injectAmneziaCompatibilityTcpOnlyUdpGuardRules(
+      profile,
+      helperRoutingResult.target
+    ) as MihomoConfig
+  }
+  profile = injectAmneziaHelperTunBypass(profile, getActiveAmneziaHelperTunBypass())
+    .config as MihomoConfig
+  const directTunBypass = await resolveRuntimeDirectTunBypass({
+    config: profile,
+    enabled: appConfig.directExcludeEnabled ?? appConfig.directRulesBypassTun ?? true,
+    mode: appConfig.directExcludeMode ?? 'conservative'
+  })
+  updateDirectTunBypassState(directTunBypass)
+  profile = injectDirectTunBypass(profile, directTunBypass).config as MihomoConfig
+  const learnedProcessBypass = resolveLearnedProcessBypass({
+    config: profile,
+    enabled: appConfig.learnedProcessBypassEnabled ?? true,
+    entries: getObservedProcessBypassEntries(),
+    platform: process.platform
+  })
+  updateLearnedProcessBypassState(learnedProcessBypass)
+  profile = injectLearnedProcessBypass(profile, learnedProcessBypass).config as MihomoConfig
+  const nativeProcessBypass = await syncNativeProcessBypass({
+    enabled: appConfig.nativeProcessBypassEnabled ?? false,
+    tunEnabled: profile.tun?.enable === true,
+    processNames: getProcessNameDirectRules(profile),
+    platform: process.platform
+  })
+  updateBypassCapabilityState(
+    evaluateBypassCapabilities({
+      config: profile,
+      platform: process.platform,
+      nativeProcessBypass,
+      directTunBypass,
+      learnedProcessBypass
+    })
+  )
+  profile = ensureMihomoRuleProviderPresets(profile) as MihomoConfig
 
   const tunEnabled = profile.tun?.enable ?? false
   if (!tunEnabled && !proxyModeEnabled) {
@@ -141,6 +232,9 @@ export async function generateProfile(): Promise<void> {
   }
 
   await cleanProfile(profile, controlDns, controlSniff, controlTun)
+  if (currentIsAmneziaProfile) {
+    profile = ensureAmneziaTunRuntimeCompatibility(profile).config as MihomoConfig
+  }
 
   runtimeConfig = profile
   runtimeConfigStr = stringifyYaml(profile)
@@ -151,6 +245,17 @@ export async function generateProfile(): Promise<void> {
     diffWorkDir ? mihomoWorkConfigPath(current) : mihomoWorkConfigPath('work'),
     runtimeConfigStr
   )
+}
+
+function getProcessNameDirectRules(profile: MihomoConfig): string[] {
+  return [
+    ...new Set(
+      parseDirectRules(profile.rules)
+        .filter((rule) => rule.type === 'PROCESS-NAME' && Boolean(rule.value?.trim()))
+        .map((rule) => rule.value?.trim())
+        .filter((value): value is string => Boolean(value))
+    )
+  ].sort()
 }
 
 async function cleanProfile(

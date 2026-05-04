@@ -1,11 +1,11 @@
 import axios from 'axios'
 import { getRuntimeConfig } from '../core/factory'
 import fs, { existsSync } from 'fs'
-import path from 'path'
+import * as path from 'path'
 import { getIcon } from 'file-icon-info'
 import { darwinDefaultIcon, otherDevicesIcon, windowsDefaultIcon } from './defaultIcon'
 import { app } from 'electron'
-import os from 'os'
+import * as os from 'os'
 import crypto from 'crypto'
 import { exec } from 'child_process'
 

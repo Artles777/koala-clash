@@ -6,9 +6,15 @@ import { tray } from '../resolve/tray'
 import { calcTraffic } from '../utils/calc'
 import { getRuntimeConfig } from './factory'
 import { floatingWindow } from '../resolve/floatingWindow'
-import { mihomoIpcPath } from '../utils/dirs'
+import { logPath, mihomoIpcPath } from '../utils/dirs'
 import { safeSend } from '../utils/safeSend'
 import { debounce } from '../utils/debounce'
+import {
+  defaultLearnedProcessBypassTtlMs,
+  observeProcessBypassConnections
+} from '../runtime/learned-process-bypass-state'
+import { getActiveMihomoIpcPath, shouldRestartCoreForMihomoIpcChange } from './mihomoIpcState'
+import { writeFile } from 'fs/promises'
 
 let axiosIns: AxiosInstance = null!
 let mihomoTrafficWs: WebSocket | null = null
@@ -21,7 +27,7 @@ let mihomoConnectionsWs: WebSocket | null = null
 let connectionsRetry = 10
 
 export const getAxios = async (force: boolean = false): Promise<AxiosInstance> => {
-  const currentSocketPath = mihomoIpcPath()
+  const currentSocketPath = getCurrentMihomoIpcPath()
 
   if (axiosIns && axiosIns.defaults.socketPath !== currentSocketPath) {
     force = true
@@ -47,6 +53,10 @@ export const getAxios = async (force: boolean = false): Promise<AxiosInstance> =
     }
   )
   return axiosIns
+}
+
+function getCurrentMihomoIpcPath(): string {
+  return getActiveMihomoIpcPath() ?? mihomoIpcPath()
 }
 
 export async function mihomoVersion(): Promise<ControllerVersion> {
@@ -238,6 +248,18 @@ export const mihomoHotReloadConfig = async (): Promise<void> => {
   const { getProfileConfig } = await import('../config')
   const { resetProviderTracking } = await import('./manager')
   await generateProfile()
+  const activeIpcPath = getActiveMihomoIpcPath()
+  const expectedIpcPath = mihomoIpcPath()
+  if (shouldRestartCoreForMihomoIpcChange(activeIpcPath, expectedIpcPath)) {
+    await writeFile(
+      logPath(),
+      `[Mihomo API]: IPC path changed from ${activeIpcPath} to ${expectedIpcPath}; restarting core instead of hot reload\n`,
+      { flag: 'a' }
+    ).catch(() => {})
+    const { restartCore } = await import('./manager')
+    await restartCore()
+    return
+  }
   const { current } = await getProfileConfig()
   const { diffWorkDir = false } = await getAppConfig()
   const { mihomoWorkConfigPath } = await import('../utils/dirs')
@@ -262,7 +284,7 @@ export const stopMihomoTraffic = (): void => {
 }
 
 const mihomoTraffic = async (): Promise<void> => {
-  mihomoTrafficWs = new WebSocket(`ws+unix:${mihomoIpcPath()}:/traffic`)
+  mihomoTrafficWs = new WebSocket(`ws+unix:${getCurrentMihomoIpcPath()}:/traffic`)
 
   mihomoTrafficWs.onmessage = async (e): Promise<void> => {
     const data = e.data as string
@@ -314,7 +336,7 @@ export const stopMihomoMemory = (): void => {
 }
 
 const mihomoMemory = async (): Promise<void> => {
-  mihomoMemoryWs = new WebSocket(`ws+unix:${mihomoIpcPath()}:/memory`)
+  mihomoMemoryWs = new WebSocket(`ws+unix:${getCurrentMihomoIpcPath()}:/memory`)
 
   mihomoMemoryWs.onmessage = (e): void => {
     const data = e.data as string
@@ -358,7 +380,7 @@ export const stopMihomoLogs = (): void => {
 const mihomoLogs = async (): Promise<void> => {
   const { 'log-level': logLevel = 'info' } = await getControledMihomoConfig()
 
-  mihomoLogsWs = new WebSocket(`ws+unix:${mihomoIpcPath()}:/logs?level=${logLevel}`)
+  mihomoLogsWs = new WebSocket(`ws+unix:${getCurrentMihomoIpcPath()}:/logs?level=${logLevel}`)
 
   mihomoLogsWs.onmessage = (e): void => {
     const data = e.data as string
@@ -393,8 +415,15 @@ const sendConnectionsDebounced = debounce((payload: ControllerConnections): void
   safeSend(mainWindow, 'mihomoConnections', payload)
 }, 100)
 
+const reloadLearnedProcessBypassDebounced = debounce((): void => {
+  void mihomoHotReloadConfig().catch(() => {
+    // The next regular config reload will pick up learned entries.
+  })
+}, 1000)
+
 export const stopMihomoConnections = (): void => {
   sendConnectionsDebounced.cancel()
+  reloadLearnedProcessBypassDebounced.cancel()
   if (mihomoConnectionsWs) {
     mihomoConnectionsWs.removeAllListeners()
     if (mihomoConnectionsWs.readyState === WebSocket.OPEN) {
@@ -412,14 +441,16 @@ export const restartMihomoConnections = async (): Promise<void> => {
 const mihomoConnections = async (): Promise<void> => {
   const { connectionInterval = 500 } = await getAppConfig()
   mihomoConnectionsWs = new WebSocket(
-    `ws+unix:${mihomoIpcPath()}:/connections?interval=${connectionInterval}`
+    `ws+unix:${getCurrentMihomoIpcPath()}:/connections?interval=${connectionInterval}`
   )
 
   mihomoConnectionsWs.onmessage = (e): void => {
     const data = e.data as string
     connectionsRetry = 10
     try {
-      sendConnectionsDebounced(JSON.parse(data) as ControllerConnections)
+      const payload = JSON.parse(data) as ControllerConnections
+      void handleLearnedProcessBypassObservation(payload)
+      sendConnectionsDebounced(payload)
     } catch {
       // ignore
     }
@@ -437,5 +468,21 @@ const mihomoConnections = async (): Promise<void> => {
       mihomoConnectionsWs.close()
       mihomoConnectionsWs = null
     }
+  }
+}
+
+async function handleLearnedProcessBypassObservation(
+  payload: ControllerConnections
+): Promise<void> {
+  try {
+    const appConfig = await getAppConfig()
+    if (!(appConfig.learnedProcessBypassEnabled ?? true)) return
+    const result = observeProcessBypassConnections(payload, {
+      platform: process.platform,
+      ttlMs: appConfig.learnedProcessBypassTtlMs ?? defaultLearnedProcessBypassTtlMs
+    })
+    if (result.changed) reloadLearnedProcessBypassDebounced()
+  } catch {
+    // Observation is best-effort and must not break the connections stream.
   }
 }

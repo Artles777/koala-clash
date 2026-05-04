@@ -20,6 +20,9 @@ import { SidebarProvider } from '@renderer/components/ui/sidebar'
 import AppSidebar from '@renderer/components/app-sidebar'
 import HwidLimitAlert from '@renderer/components/profiles/hwid-limit-alert'
 import WindowControls from '@renderer/components/window-controls'
+import CoreSetupModalHost, {
+  CoreSetupTarget
+} from '@renderer/components/mihomo/core-setup-modal-host'
 import mapDark from '@renderer/assets/map_darktheme.svg'
 import mapLight from '@renderer/assets/map_lighttheme.svg'
 import { attachConnectionsStore } from '@renderer/store/connections-store'
@@ -33,11 +36,7 @@ let navigate: NavigateFunction
 const App: React.FC = () => {
   const { t } = useTranslation()
   const { appConfig } = useAppConfig()
-  const {
-    appTheme = 'system',
-    customTheme,
-    autoCheckUpdate
-  } = appConfig || {}
+  const { appTheme = 'system', customTheme, autoCheckUpdate } = appConfig || {}
   const { setTheme, systemTheme, resolvedTheme } = useTheme()
   const mapBg = resolvedTheme === 'dark' ? mapDark : mapLight
   navigate = useNavigate()
@@ -92,6 +91,7 @@ const App: React.FC = () => {
   const [showQuitConfirm, setShowQuitConfirm] = useState(false)
   const [showProfileInstallConfirm, setShowProfileInstallConfirm] = useState(false)
   const [showAdminRequired, setShowAdminRequired] = useState(false)
+  const [coreSetupTarget, setCoreSetupTarget] = useState<CoreSetupTarget | null>(null)
   const profileInstallConfirmedRef = useRef(false)
   const [profileInstallData, setProfileInstallData] = useState<{
     url: string
@@ -115,7 +115,19 @@ const App: React.FC = () => {
     window.electron.ipcRenderer.on('show-profile-install-confirm', handleShowProfileInstallConfirm)
 
     const handleShowError = (_event: unknown, title: string, message: string): void => {
-      toast.error(title, { description: message })
+      const setupTarget = detectCoreSetupTarget(title, message)
+      toast.error(title, {
+        description: message,
+        action: setupTarget
+          ? {
+              label:
+                setupTarget === 'service'
+                  ? t('pages.home.coreSetupServiceAction')
+                  : t('pages.home.coreSetupAction'),
+              onClick: () => setCoreSetupTarget(setupTarget)
+            }
+          : undefined
+      })
     }
     window.electron.ipcRenderer.on('showError', handleShowError)
 
@@ -236,6 +248,7 @@ const App: React.FC = () => {
           className="guide-admin-required-modal"
         />
       )}
+      <CoreSetupModalHost target={coreSetupTarget} onTargetChange={setCoreSetupTarget} />
       <HwidLimitAlert />
       {platform === 'darwin' && (
         <div className="fixed top-0.5 -left-1 h-14.25 flex items-center pl-3 z-100 app-drag">
@@ -249,3 +262,38 @@ const App: React.FC = () => {
 }
 
 export default App
+
+function detectCoreSetupTarget(title: string, message: string): CoreSetupTarget | null {
+  const text = `${title}\n${message}`.toLowerCase()
+  if (
+    text.includes('sparkle-service') ||
+    text.includes('service install') ||
+    text.includes('service start') ||
+    text.includes('service init') ||
+    text.includes('установки службы') ||
+    text.includes('запуска службы') ||
+    text.includes('инициализации службы')
+  ) {
+    return 'service'
+  }
+
+  if (
+    (text.includes('tun') && text.includes('operation not permitted')) ||
+    (text.includes('tun') && text.includes('permission')) ||
+    text.includes('start tun listening error') ||
+    text.includes('не удалось запустить tun') ||
+    text.includes('права ядра') ||
+    text.includes('настройки ядра') ||
+    text.includes('core permission') ||
+    ((text.includes('permission denied') || text.includes('not permitted')) &&
+      (text.includes('mihomo') ||
+        text.includes('sidecar') ||
+        text.includes('tun') ||
+        text.includes('core') ||
+        text.includes('ядр')))
+  ) {
+    return 'permission'
+  }
+
+  return null
+}

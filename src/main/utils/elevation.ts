@@ -6,6 +6,23 @@ const execFilePromise = promisify(execFile)
 
 let isAdminCached: boolean | null = null
 
+export function quotePosixShellArg(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`
+}
+
+function escapeAppleScriptString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+export function buildMacOSElevatedShellCommand(command: string, args: string[]): string {
+  return [command, ...args].map(quotePosixShellArg).join(' ')
+}
+
+export function buildMacOSElevatedAppleScript(command: string, args: string[]): string {
+  const shellCommand = buildMacOSElevatedShellCommand(command, args)
+  return `do shell script "${escapeAppleScriptString(shellCommand)}" with administrator privileges`
+}
+
 async function isRunningAsAdmin(): Promise<boolean> {
   if (isAdminCached !== null) {
     return isAdminCached
@@ -59,12 +76,8 @@ export async function execWithElevation(command: string, args: string[]): Promis
       )
     }
   } else if (process.platform === 'darwin') {
-    const cmd = `${command} ${args.join(' ')}`
     try {
-      await execFilePromise('osascript', [
-        '-e',
-        `do shell script "${cmd}" with administrator privileges`
-      ])
+      await execFilePromise('osascript', ['-e', buildMacOSElevatedAppleScript(command, args)])
     } catch (error) {
       throw new Error(
         `${t('error.macosElevationFailed')}：${error instanceof Error ? error.message : String(error)}`

@@ -12,7 +12,16 @@ import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import Power from '@renderer/assets/on_icon.svg'
 import Pause from '@renderer/assets/pause_icon.svg'
-import { InfinityIcon, WifiOff, PlusCircle, ChevronRight, Globe, ArrowUp, ArrowDown, RefreshCcw } from 'lucide-react'
+import {
+  InfinityIcon,
+  WifiOff,
+  PlusCircle,
+  ChevronRight,
+  Globe,
+  ArrowUp,
+  ArrowDown,
+  RefreshCcw
+} from 'lucide-react'
 import { SiTelegram } from 'react-icons/si'
 import EditInfoModal from '@renderer/components/profiles/edit-info-modal'
 import { Spinner } from '@renderer/components/ui/spinner'
@@ -24,6 +33,7 @@ import {
   formatVlessRuntimeErrorMessage,
   getVlessProfilePresentation
 } from '@renderer/utils/vless-profile-presentation'
+import CoreReadinessShortcut from '@renderer/components/mihomo/core-readiness-shortcut'
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B'
@@ -42,7 +52,7 @@ const Home: React.FC = () => {
     mainSwitchMode = 'tun',
     sysProxy,
     proxyMode = false,
-    onlyActiveDevice = false,
+    onlyActiveDevice = false
   } = appConfig || {}
   const { enable: writeSysProxy = true, mode } = sysProxy || {}
   const { controledMihomoConfig, patchControledMihomoConfig } = useControledMihomoConfig()
@@ -152,7 +162,8 @@ const Home: React.FC = () => {
   const trafficTotal = subscription?.total ?? 0
   const trafficRemaining = trafficTotal > 0 ? trafficTotal - trafficUsed : 0
   const expireTimestamp = subscription?.expire ?? 0
-  const expireDate = expireTimestamp > 0 ? dayjs.unix(expireTimestamp).format('L') : t('pages.home.never')
+  const expireDate =
+    expireTimestamp > 0 ? dayjs.unix(expireTimestamp).format('L') : t('pages.home.never')
   const daysRemaining =
     expireTimestamp > 0 ? Math.max(0, dayjs.unix(expireTimestamp).diff(dayjs(), 'day')) : 0
 
@@ -166,7 +177,9 @@ const Home: React.FC = () => {
       return {
         href: parsed.toString(),
         isTelegram:
-          parsed.protocol === 'tg:' || normalized.includes('t.me') || normalized.includes('telegram')
+          parsed.protocol === 'tg:' ||
+          normalized.includes('t.me') ||
+          normalized.includes('telegram')
       }
     } catch {
       return null
@@ -246,6 +259,8 @@ const Home: React.FC = () => {
               onImported={() => {
                 mutateProfileConfig()
                 window.electron.ipcRenderer.send('updateTrayMenu')
+                setShowEditModal(false)
+                setEditingItem(null)
               }}
               onClose={() => {
                 setShowEditModal(false)
@@ -330,6 +345,8 @@ const Home: React.FC = () => {
               </div>
             </div>
           )}
+
+          <CoreReadinessShortcut />
 
           {/* Connection button */}
           <div className="flex flex-col grow-3 items-center justify-center min-h-0">

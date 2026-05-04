@@ -1,0 +1,60 @@
+{
+  "component": "koala-process-bypass",
+  "serviceName": "KoalaProcessBypass",
+  "controllerName": "koala-process-bypassctl.exe",
+  "commands": ["status", "apply", "cleanup"],
+  "koalaLaunchContract": {
+    "apply": [
+      "apply",
+      "--session",
+      "<session-id>",
+      "--service",
+      "KoalaProcessBypass",
+      "--json",
+      "--process-name",
+      "<exact-process-name>"
+    ],
+    "cleanup": [
+      "cleanup",
+      "--session",
+      "<session-id>",
+      "--service",
+      "KoalaProcessBypass",
+      "--json"
+    ],
+    "status": ["status", "--service", "KoalaProcessBypass", "--json"]
+  },
+  "jsonFields": [
+    "ok",
+    "serviceAvailable",
+    "elevated",
+    "prerequisitesOk",
+    "dataPlaneActive",
+    "policyInstalled",
+    "filterCount",
+    "activeSessionId",
+    "reasonCode",
+    "message",
+    "diagnostics",
+    "appliedProcessNames"
+  ],
+  "dataPlaneActiveRequires": [
+    "administrator",
+    "KoalaProcessBypass service installed",
+    "BFE/WFP engine available",
+    "Koala WFP connect-redirect callout driver registered",
+    "session WFP filters installed"
+  ],
+  "reasonCodes": [
+    "windows_wfp_service_missing",
+    "windows_admin_required",
+    "windows_data_plane_inactive",
+    "windows_data_plane_active",
+    "windows_apply_failed",
+    "windows_cleanup_failed",
+    "windows_cleanup_complete",
+    "no_process_names",
+    "no_matching_processes",
+    "invalid_arguments"
+  ]
+}

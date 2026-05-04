@@ -18,7 +18,6 @@ const Logs: React.FC = () => {
   const [logs, setLogs] = useState<ControllerLog[]>(() => useLogsStore.getState().logs)
   const [filter, setFilter] = useState('')
   const [trace, setTrace] = useState(true)
-  const traceRef = useRef(trace)
 
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const filteredLogs = useMemo(() => {
@@ -31,29 +30,26 @@ const Logs: React.FC = () => {
   const toggleTrace = useCallback(() => {
     setTrace((prev) => {
       const next = !prev
-      traceRef.current = next
       if (next) {
-        setLogs([...useLogsStore.getState().logs])
+        requestAnimationFrame(() => {
+          const lastIndex = filteredLogs.length - 1
+          if (lastIndex >= 0) {
+            virtuosoRef.current?.scrollToIndex({
+              index: lastIndex,
+              behavior: 'smooth',
+              align: 'end',
+              offset: 0
+            })
+          }
+        })
       }
       return next
     })
-  }, [])
-
-  useEffect(() => {
-    if (!trace) return
-    virtuosoRef.current?.scrollToIndex({
-      index: filteredLogs.length - 1,
-      behavior: 'smooth',
-      align: 'end',
-      offset: 0
-    })
-  }, [filteredLogs, trace])
+  }, [filteredLogs.length])
 
   useEffect(() => {
     return useLogsStore.subscribe((state) => {
-      if (traceRef.current) {
-        setLogs([...state.logs])
-      }
+      setLogs([...state.logs])
     })
   }, [])
 
@@ -95,8 +91,8 @@ const Logs: React.FC = () => {
         <Virtuoso
           ref={virtuosoRef}
           data={filteredLogs}
-          initialTopMostItemIndex={filteredLogs.length - 1}
-          followOutput={trace}
+          initialTopMostItemIndex={Math.max(filteredLogs.length - 1, 0)}
+          followOutput={(isAtBottom) => (trace && isAtBottom ? 'smooth' : false)}
           itemContent={(i, log) => {
             return (
               <LogItem
