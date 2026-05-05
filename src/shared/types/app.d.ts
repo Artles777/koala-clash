@@ -119,7 +119,7 @@ interface ProfileConfig {
 }
 
 type ProfileKind = 'mihomo' | 'amnezia'
-type ProfileSourceType = 'remote_url' | 'local_file' | 'amnezia_vpn_uri' | 'unknown'
+type ProfileSourceType = 'remote_url' | 'local_file' | 'amnezia_vpn_uri' | 'vless_uri' | 'unknown'
 type ProfileRuntimeSupport =
   | 'none'
   | 'planned'
@@ -367,7 +367,6 @@ interface ProfileItem {
   id: string
   type: 'remote' | 'local'
   name: string
-  sourceType?: 'vless_uri'
   source?: ProfileSourceMetadata
   url?: string // remote
   ua?: string // remote

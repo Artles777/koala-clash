@@ -91,7 +91,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
   const canImport = isNew
     ? isLocal
       ? !!values.file
-      : importInput.kind !== 'invalid' && importInput.kind !== 'unsupported_format' && !vlessInvalid
+      : importInput.kind !== 'invalid' && !vlessInvalid
     : true
 
   const onSave = async (): Promise<void> => {

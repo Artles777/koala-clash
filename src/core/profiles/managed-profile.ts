@@ -1,5 +1,10 @@
 export type ManagedProfileKind = 'mihomo' | 'amnezia'
-export type ManagedProfileSourceType = 'remote_url' | 'local_file' | 'amnezia_vpn_uri' | 'unknown'
+export type ManagedProfileSourceType =
+  | 'remote_url'
+  | 'local_file'
+  | 'amnezia_vpn_uri'
+  | 'vless_uri'
+  | 'unknown'
 export type ManagedRuntimeSupport =
   | 'none'
   | 'planned'

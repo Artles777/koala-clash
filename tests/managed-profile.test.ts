@@ -78,6 +78,30 @@ describe('managed profile metadata', () => {
     assert.equal(capabilities.canEditRules, true)
   })
 
+  it('keeps imported VLESS profiles on the Mihomo-native runtime path', () => {
+    const item: ManagedProfileItemLike = {
+      id: 'vless-1',
+      type: 'local',
+      name: 'Imported VLESS',
+      profileKind: 'mihomo',
+      sourceType: 'vless_uri',
+      runtimeSupport: 'available',
+      validityStatus: 'valid',
+      executionStatus: 'ready_for_runtime'
+    }
+
+    const metadata = getManagedProfileMetadata(item)
+    const capabilities = getProfileRuntimeCapabilities(item)
+    const badges = getProfileBadgeDescriptors(item)
+
+    assert.equal(metadata.profileKind, 'mihomo')
+    assert.equal(metadata.sourceType, 'vless_uri')
+    assert.equal(capabilities.runtimeType, 'mihomo')
+    assert.equal(capabilities.executionKind, 'mihomo-native')
+    assert.equal(capabilities.requiresHelper, false)
+    assert.deepEqual(badges, [])
+  })
+
   it('upgrades old placeholder Amnezia profiles without clearing helper-backed current selection', () => {
     const config: ManagedProfileConfigLike = {
       current: 'amnezia-1',

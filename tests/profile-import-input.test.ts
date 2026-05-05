@@ -37,6 +37,9 @@ describe('profile import submit routing', () => {
       importRemoteUrl: async (url) => {
         calls.push(`remote:${url}`)
       },
+      importVlessUri: async (raw) => {
+        calls.push(`vless:${raw}`)
+      },
       importAmneziaKey: async (raw) => {
         calls.push(`amnezia:${raw}`)
       }
@@ -52,6 +55,9 @@ describe('profile import submit routing', () => {
     const result = await submitProfileImportInput('vpn://AAAJ2Hic...', {
       importRemoteUrl: async (url) => {
         calls.push(`remote:${url}`)
+      },
+      importVlessUri: async (raw) => {
+        calls.push(`vless:${raw}`)
       },
       importAmneziaKey: async (raw) => {
         calls.push(`amnezia:${raw}`)
@@ -70,6 +76,9 @@ describe('profile import submit routing', () => {
         submitProfileImportInput('ftp://example.com/config.yaml', {
           importRemoteUrl: async (url) => {
             calls.push(`remote:${url}`)
+          },
+          importVlessUri: async (raw) => {
+            calls.push(`vless:${raw}`)
           },
           importAmneziaKey: async (raw) => {
             calls.push(`amnezia:${raw}`)

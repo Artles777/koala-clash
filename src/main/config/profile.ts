@@ -200,11 +200,14 @@ async function downloadLogoAsBase64(
 
 export async function createProfile(item: Partial<ProfileItem>): Promise<ProfileItem> {
   const id = item.id || new Date().getTime().toString(16)
+  const type = item.type || 'local'
+  const managedFields = createMihomoManagedProfileFields(type)
   const newItem = {
     id,
-    name: item.name || (item.type === 'remote' ? 'Remote File' : 'Local File'),
-    type: item.type,
-    sourceType: item.sourceType,
+    name: item.name || (type === 'remote' ? 'Remote File' : 'Local File'),
+    type,
+    ...managedFields,
+    sourceType: item.sourceType ?? managedFields.sourceType,
     source: item.source,
     url: item.url,
     ua: item.ua,
@@ -212,8 +215,7 @@ export async function createProfile(item: Partial<ProfileItem>): Promise<Profile
     autoUpdate: item.autoUpdate ?? true,
     interval: item.interval || 0,
     useProxy: item.useProxy || false,
-    updated: new Date().getTime(),
-    ...createMihomoManagedProfileFields(item.type || 'local')
+    updated: new Date().getTime()
   } as ProfileItem
   switch (newItem.type) {
     case 'remote': {
