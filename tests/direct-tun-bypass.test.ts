@@ -1,13 +1,13 @@
 import * as assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  injectAmneziaHelperTunBypass,
-  createAmneziaHelperTunBypassResolved
-} from '../src/core/routing/amnezia-helper-tun-bypass'
-import {
   injectDirectTunBypass,
   resolveDirectTunBypass
 } from '../src/core/routing/direct-tun-bypass'
+import {
+  getLastDirectTunBypass,
+  updateDirectTunBypassState
+} from '../src/main/runtime/direct-tun-bypass-state'
 
 describe('DIRECT rule TUN bypass compatibility', () => {
   it('does not inject when TUN is disabled', async () => {
@@ -54,6 +54,15 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     assert.equal(resolution.excludableRuleCount, 1)
     assert.equal(resolution.failedRuleCount, 0)
     assert.deepEqual(resolution.routeExcludeAddresses, ['149.154.160.0/20'])
+    assert.deepEqual(resolution.resolvedRules, [
+      {
+        rule: 'IP-CIDR,149.154.160.0/20,DIRECT',
+        ruleType: 'IP-CIDR',
+        value: '149.154.160.0/20',
+        routeExcludeAddresses: ['149.154.160.0/20'],
+        coverage: 'exact_route_exclude'
+      }
+    ])
     assert.equal(injection.injected, true)
     assert.deepEqual(injection.config.tun?.['route-exclude-address'], ['149.154.160.0/20'])
     assert.deepEqual(config.tun?.['route-exclude-address'], undefined)
@@ -87,6 +96,22 @@ describe('DIRECT rule TUN bypass compatibility', () => {
       '2001:db8::10/128',
       '203.0.113.10/32'
     ])
+    assert.deepEqual(resolution.resolvedRules, [
+      {
+        rule: 'DOMAIN,telegram.org,DIRECT',
+        ruleType: 'DOMAIN',
+        value: 'telegram.org',
+        routeExcludeAddresses: ['149.154.167.99/32'],
+        coverage: 'resolved_ip_route_exclude'
+      },
+      {
+        rule: 'DOMAIN-SUFFIX,example.com,DIRECT',
+        ruleType: 'DOMAIN-SUFFIX',
+        value: 'example.com',
+        routeExcludeAddresses: ['2001:db8::10/128', '203.0.113.10/32'],
+        coverage: 'partial_resolved_ip_route_exclude'
+      }
+    ])
     assert.ok(resolution.warnings.some((warning) => warning.code === 'domain_suffix_apex_only'))
     assert.equal(injection.injected, true)
   })
@@ -115,24 +140,19 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     assert.equal(injection.reason, 'bypass_not_resolved')
   })
 
-  it('coexists with helper TUN bypass and removes duplicate exclusions', async () => {
-    const helperBypass = createAmneziaHelperTunBypassResolved({
-      endpointHost: 'vpn.example.com',
-      ips: ['203.0.113.10']
-    })
+  it('merges with existing route exclusions and removes duplicates', async () => {
     const config = {
       tun: {
         enable: true,
-        'route-exclude-address': ['10.0.0.1/32']
+        'route-exclude-address': ['10.0.0.1/32', '203.0.113.10/32']
       },
       rules: ['IP-CIDR,203.0.113.10/32,DIRECT', 'IP-CIDR,149.154.160.0/20,DIRECT']
     }
-    const withHelper = injectAmneziaHelperTunBypass(config, helperBypass).config
     const directResolution = await resolveDirectTunBypass({
-      config: withHelper,
+      config,
       enabled: true
     })
-    const withDirect = injectDirectTunBypass(withHelper, directResolution).config
+    const withDirect = injectDirectTunBypass(config, directResolution).config
 
     assert.deepEqual(withDirect.tun?.['route-exclude-address'], [
       '10.0.0.1/32',
@@ -186,5 +206,23 @@ describe('DIRECT rule TUN bypass compatibility', () => {
     assert.equal(resolution.status, 'failed')
     assert.equal(resolution.unsupportedRuleCount, 1)
     assert.equal(resolution.unsupportedRules[0].reasonCode, 'domain_keyword_unsupported')
+  })
+})
+
+describe('direct-tun-bypass cached state', () => {
+  it('clears the cached resolution when stopCore passes undefined', async () => {
+    const config = {
+      tun: { enable: true },
+      rules: ['IP-CIDR,149.154.160.0/20,DIRECT']
+    }
+    const resolution = await resolveDirectTunBypass({ config, enabled: true })
+
+    updateDirectTunBypassState(resolution)
+    const stored = getLastDirectTunBypass()
+    assert.equal(stored?.active, true)
+    assert.deepEqual(stored?.routeExcludeAddresses, ['149.154.160.0/20'])
+
+    updateDirectTunBypassState(undefined)
+    assert.equal(getLastDirectTunBypass(), undefined)
   })
 })

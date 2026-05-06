@@ -42,6 +42,7 @@ import { setSysDns } from '../service/api'
 import { t } from '../utils/i18n'
 import { clearActiveMihomoIpcPath, setActiveMihomoIpcPath } from './mihomoIpcState'
 import { execWithElevation } from '../utils/elevation'
+import { updateDirectTunBypassState } from '../runtime/direct-tun-bypass-state'
 
 const ctlParam = process.platform === 'win32' ? '-ext-ctl-pipe' : '-ext-ctl-unix'
 
@@ -78,8 +79,30 @@ let initialized = false
 let providerNames = new Set<string>()
 let unmatchedProviders = new Set<string>()
 
+type BuiltinCoreName = 'mihomo' | 'mihomo-alpha'
+
+export interface BuiltinCoreAvailability {
+  mihomo: boolean
+  'mihomo-alpha': boolean
+}
+
 const normalize = (s: string): string =>
   s.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).normalize('NFC')
+
+function builtinCoreExists(coreName: BuiltinCoreName): boolean {
+  return existsSync(mihomoCorePath(coreName))
+}
+
+function availableBuiltinCores(): BuiltinCoreName[] {
+  return (['mihomo', 'mihomo-alpha'] as BuiltinCoreName[]).filter(builtinCoreExists)
+}
+
+export function getBuiltinCoreAvailability(): BuiltinCoreAvailability {
+  return {
+    mihomo: builtinCoreExists('mihomo'),
+    'mihomo-alpha': builtinCoreExists('mihomo-alpha')
+  }
+}
 
 export async function resetProviderTracking(): Promise<void> {
   const { 'rule-providers': ruleProviders, 'proxy-providers': proxyProviders } =
@@ -107,11 +130,24 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
   const { current } = await getProfileConfig()
   const { tun } = await getControledMihomoConfig()
 
+  let selectedCore = core
+  if (selectedCore === 'mihomo' || selectedCore === 'mihomo-alpha') {
+    const availability = getBuiltinCoreAvailability()
+    if (!availability[selectedCore]) {
+      if (selectedCore === 'mihomo-alpha' && availability.mihomo) {
+        await patchAppConfig({ core: 'mihomo' })
+        selectedCore = 'mihomo'
+      } else {
+        throw new Error(`Built-in core "${selectedCore}" is not available in this build.`)
+      }
+    }
+  }
+
   let corePath: string
   try {
-    corePath = mihomoCorePath(core)
+    corePath = mihomoCorePath(selectedCore)
   } catch (error) {
-    if (core === 'system') {
+    if (selectedCore === 'system') {
       await patchAppConfig({ core: 'mihomo' })
       return startCore(detached)
     }
@@ -258,7 +294,6 @@ export async function startCore(detached = false): Promise<Promise<void>[]> {
                     patchMihomoConfig({ 'log-level': logLevel })
                   )
                 ]).then(() => {
-                  void syncCurrentAmneziaHelperAfterCoreStart()
                   resolve()
                 })
               }
@@ -308,6 +343,7 @@ export async function stopCore(force = false): Promise<void> {
     child = undefined as unknown as ChildProcess
   }
   clearActiveMihomoIpcPath()
+  updateDirectTunBypassState(undefined)
 
   await getAxios(true).catch(() => {})
 
@@ -507,22 +543,8 @@ export async function keepCoreAlive(): Promise<void> {
   }
 }
 
-async function syncCurrentAmneziaHelperAfterCoreStart(): Promise<void> {
-  try {
-    const { syncCurrentAmneziaHelperWithRuntimeMode } =
-      await import('../runtime/amnezia-helper-manager')
-    await syncCurrentAmneziaHelperWithRuntimeMode()
-  } catch (error) {
-    await writeFile(logPath(), `[Manager]: sync Amnezia helper failed, ${error}\n`, {
-      flag: 'a'
-    })
-  }
-}
-
 export async function quitWithoutCore(): Promise<void> {
   await keepCoreAlive()
-  const { stopAllAmneziaHelpers } = await import('../runtime/amnezia-helper-manager')
-  await stopAllAmneziaHelpers('app_shutdown')
   const { stopNativeProcessBypass } = await import('../runtime/native-process-bypass')
   await stopNativeProcessBypass().catch(async (error) => {
     await writeFile(logPath(), `[Manager]: native process bypass cleanup failed, ${error}\n`, {
@@ -572,6 +594,9 @@ export async function manualGrantCorePermition(
   const execFilePromise = promisify(execFile)
 
   const grantPermission = async (coreName: 'mihomo' | 'mihomo-alpha'): Promise<void> => {
+    if (!builtinCoreExists(coreName)) {
+      throw new Error(`Built-in core "${coreName}" is not available in this build.`)
+    }
     const corePath = mihomoCorePath(coreName)
     try {
       if (process.platform === 'darwin') {
@@ -599,7 +624,7 @@ export async function manualGrantCorePermition(
     }
   }
 
-  const targetCores = cores || ['mihomo', 'mihomo-alpha']
+  const targetCores = cores || availableBuiltinCores()
   await Promise.all(targetCores.map((core) => grantPermission(core)))
 }
 
@@ -644,6 +669,9 @@ export async function revokeCorePermission(cores?: ('mihomo' | 'mihomo-alpha')[]
   const execFilePromise = promisify(execFile)
 
   const revokePermission = async (coreName: 'mihomo' | 'mihomo-alpha'): Promise<void> => {
+    if (!builtinCoreExists(coreName)) {
+      return
+    }
     const corePath = mihomoCorePath(coreName)
     try {
       if (process.platform === 'darwin') {
@@ -663,7 +691,7 @@ export async function revokeCorePermission(cores?: ('mihomo' | 'mihomo-alpha')[]
     }
   }
 
-  const targetCores = cores || ['mihomo', 'mihomo-alpha']
+  const targetCores = cores || availableBuiltinCores()
   await Promise.all(targetCores.map((core) => revokePermission(core)))
 }
 
