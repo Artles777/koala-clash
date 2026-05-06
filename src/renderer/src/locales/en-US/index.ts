@@ -211,7 +211,7 @@ export default {
       dropFileHint: 'Drop config file here',
       ruBundlePromptTitle: 'Next step: RU bundle',
       ruBundlePromptDescription:
-        'Add ru-bundle to {{name}} so Russian-language sites use PROXY by default.',
+        'Add ru-bundle to {{name}} so domains blocked in Russia are routed through PROXY.',
       ruBundlePromptAction: 'Add RU bundle',
       ruBundlePromptDismiss: 'Not now',
       ruBundlePromptAdded: 'RU bundle added to {{name}}',

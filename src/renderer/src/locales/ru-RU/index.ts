@@ -213,7 +213,7 @@ export default {
       dropFileHint: 'Перетащите файл конфигурации сюда',
       ruBundlePromptTitle: 'Следующий шаг: RU bundle',
       ruBundlePromptDescription:
-        'Добавить ru-bundle в профиль {{name}}, чтобы русскоязычные сайты по умолчанию шли через PROXY.',
+        'Добавить ru-bundle в профиль {{name}}, чтобы заблокированные в РФ домены шли через PROXY.',
       ruBundlePromptAction: 'Добавить RU bundle',
       ruBundlePromptDismiss: 'Не сейчас',
       ruBundlePromptAdded: 'RU bundle добавлен в профиль {{name}}',

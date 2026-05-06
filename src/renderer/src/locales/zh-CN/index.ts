@@ -284,7 +284,7 @@ export default {
       addProfile: '添加订阅',
       dropFileHint: '将配置文件拖放到此处',
       ruBundlePromptTitle: '下一步：RU bundle',
-      ruBundlePromptDescription: '将 ru-bundle 添加到 {{name}}，让俄语网站默认走 PROXY。',
+      ruBundlePromptDescription: '将 ru-bundle 添加到 {{name}}，让在俄罗斯被封锁的域名走 PROXY。',
       ruBundlePromptAction: '添加 RU bundle',
       ruBundlePromptDismiss: '稍后',
       ruBundlePromptAdded: 'RU bundle 已添加到 {{name}}',
