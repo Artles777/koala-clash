@@ -1,7 +1,7 @@
 import BasePage from '@renderer/components/base/base-page'
 import RuleItem from '@renderer/components/rules/rule-item'
 import EditRulesModal from '@renderer/components/profiles/edit-rules-modal'
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import yaml from 'js-yaml'
 import useSWR from 'swr'
 import { Separator } from '@renderer/components/ui/separator'
@@ -114,6 +114,7 @@ const Rules: React.FC = () => {
   const [bulkImportText, setBulkImportText] = useState('')
   const [bulkImportSummary, setBulkImportSummary] = useState('')
   const [rulesBusy, setRulesBusy] = useState(false)
+  const importFileInputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
   const { groups } = useGroups()
   const { bundle, mutateMihomoRules } = useUnifiedUiBundle()
@@ -679,6 +680,38 @@ const Rules: React.FC = () => {
     }
   }
 
+  const handleExportRulesToFile = (rules: UnifiedRuleItem[]): void => {
+    const exportableRules = rules.filter(isUnifiedManagedRuleSelectable)
+    if (exportableRules.length === 0) {
+      toast.error(t('pages.rules.noExportableRules'))
+      return
+    }
+
+    try {
+      const filename = `koala-rules-${new Date().toISOString().slice(0, 10)}.json`
+      saveTextToFile(filename, serializeUnifiedRulesExportDocument(exportableRules))
+      toast.success(t('pages.rules.rulesExportedToFile', { count: exportableRules.length, filename }))
+    } catch (e) {
+      toast.error(`${e}`)
+    }
+  }
+
+  const handleImportRulesFromFile = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ): Promise<void> => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    try {
+      const text = await file.text()
+      setBulkImportText(text)
+      setShowBulkImport(true)
+      toast.success(t('pages.rules.rulesLoadedFromFile', { name: file.name }))
+    } catch (e) {
+      toast.error(`${t('pages.rules.rulesImportFileError')}: ${e}`)
+    }
+  }
+
   const updateManagedRule = async (
     rule: UnifiedRuleItem,
     draft: { type: string; value: string; target: string }
@@ -1100,6 +1133,22 @@ const Rules: React.FC = () => {
                 size="sm"
                 variant="outline"
                 className="gap-1.5"
+                onClick={() => importFileInputRef.current?.click()}
+              >
+                <Upload className="size-4" />
+                {t('pages.rules.importFromFile')}
+              </Button>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                hidden
+                onChange={handleImportRulesFromFile}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
                 disabled={filteredManagedRules.length === 0}
                 onClick={() => handleExportRules(filteredManagedRules)}
               >
@@ -1115,6 +1164,16 @@ const Rules: React.FC = () => {
               >
                 <Download className="size-4" />
                 {t('pages.rules.exportOwner')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={filteredManagedRules.length === 0}
+                onClick={() => handleExportRulesToFile(filteredManagedRules)}
+              >
+                <Save className="size-4" />
+                {t('pages.rules.exportToFile')}
               </Button>
             </div>
           )}
@@ -1401,6 +1460,18 @@ async function copyTextToClipboard(text: string): Promise<void> {
     throw new Error('Clipboard API is unavailable')
   }
   await navigator.clipboard.writeText(text)
+}
+
+function saveTextToFile(filename: string, text: string): void {
+  const blob = new Blob([text], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 async function readRulePatches(
