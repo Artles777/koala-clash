@@ -83,6 +83,10 @@ async function assertProfileYamlSupported(id: string): Promise<void> {
   if (!existsSync(filePath)) return
   const content = await readFile(filePath, 'utf-8')
   if (!content.trim()) return
+  assertMihomoProfileContent(id, content)
+}
+
+function assertMihomoProfileContent(id: string, content: string): void {
   let parsed: unknown
   try {
     parsed = parseYaml(content)
@@ -390,6 +394,9 @@ export async function getProfileParseStr(id: string | undefined): Promise<string
 
 export async function setProfileStr(id: string, content: string): Promise<void> {
   const { current } = await getProfileConfig()
+  if (current === id && content.trim()) {
+    assertMihomoProfileContent(id, content)
+  }
   await writeFile(profilePath(id), content, 'utf-8')
   if (current === id) {
     const { useHotReloadProfile = true } = await getAppConfig()
