@@ -11,18 +11,6 @@ import { copyFile, mkdir, readFile, writeFile } from 'fs/promises'
 import { deepMerge } from '../utils/merge'
 import { existsSync } from 'fs'
 import * as path from 'path'
-import { injectAmneziaHelperRoutingTarget } from '../../core/routing/amnezia-helper-routing'
-import {
-  ensureAmneziaCompatibilityFallbackRule,
-  ensureAmneziaCompatibilityProxyGroup,
-  injectAmneziaCompatibilityTcpOnlyUdpGuardRules
-} from '../../core/routing/amnezia-compatibility-proxy-group'
-import { getActiveAmneziaHelperRoutingTarget } from '../runtime/amnezia-helper-routing-state'
-import { injectAmneziaHelperRules } from '../../core/routing/amnezia-helper-rules'
-import { getAmneziaHelperRules } from '../config/amneziaHelperRules'
-import { injectAmneziaHelperTunBypass } from '../../core/routing/amnezia-helper-tun-bypass'
-import { getActiveAmneziaHelperTunBypass } from '../runtime/amnezia-helper-tun-bypass-state'
-import { ensureAmneziaTunRuntimeCompatibility } from '../../core/routing/amnezia-tun-runtime-compatibility'
 import {
   ensureMihomoRuleProviderPresets,
   pinKoalaRuBundleRulesLast
@@ -41,6 +29,7 @@ import {
 } from '../runtime/learned-process-bypass-state'
 import { syncNativeProcessBypass } from '../runtime/native-process-bypass'
 import { updateBypassCapabilityState } from '../runtime/bypass-capability-state'
+import { configureLanSettings } from '../../core/profiles/lan-settings'
 
 let runtimeConfigStr: string,
   rawProfileStr: string,
@@ -81,9 +70,6 @@ function processRulesWithOffset(ruleStrings: string[], currentRules: string[], i
 export async function generateProfile(): Promise<void> {
   const profileConfig = await getProfileConfig()
   const { current } = profileConfig
-  const currentProfileItem = profileConfig.items?.find((item) => item.id === current)
-  const currentIsAmneziaProfile =
-    currentProfileItem?.profileKind === 'amnezia' || currentProfileItem?.compatibility === 'amnezia'
   const appConfig = await getAppConfig()
   const {
     diffWorkDir = false,
@@ -161,35 +147,6 @@ export async function generateProfile(): Promise<void> {
   }
 
   let profile = deepMerge(JSON.parse(JSON.stringify(currentProfile)), configToMerge)
-  if (currentIsAmneziaProfile) {
-    profile = ensureAmneziaCompatibilityProxyGroup(profile)
-  }
-  const helperRoutingResult = injectAmneziaHelperRoutingTarget(
-    profile,
-    getActiveAmneziaHelperRoutingTarget()
-  )
-  profile = helperRoutingResult.config as MihomoConfig
-  if (currentIsAmneziaProfile && helperRoutingResult.injected) {
-    profile = ensureAmneziaCompatibilityProxyGroup(profile, helperRoutingResult.target)
-  }
-  if (currentIsAmneziaProfile) {
-    profile = ensureAmneziaCompatibilityFallbackRule(profile, helperRoutingResult.target)
-  }
-  if (helperRoutingResult.injected) {
-    profile = injectAmneziaHelperRules(
-      profile,
-      helperRoutingResult.target,
-      await getAmneziaHelperRules()
-    ).config as MihomoConfig
-  }
-  if (currentIsAmneziaProfile) {
-    profile = injectAmneziaCompatibilityTcpOnlyUdpGuardRules(
-      profile,
-      helperRoutingResult.target
-    ) as MihomoConfig
-  }
-  profile = injectAmneziaHelperTunBypass(profile, getActiveAmneziaHelperTunBypass())
-    .config as MihomoConfig
   const directTunBypass = await resolveRuntimeDirectTunBypass({
     config: profile,
     enabled: appConfig.directExcludeEnabled ?? appConfig.directRulesBypassTun ?? true,
@@ -232,9 +189,6 @@ export async function generateProfile(): Promise<void> {
   }
 
   await cleanProfile(profile, controlDns, controlSniff, controlTun)
-  if (currentIsAmneziaProfile) {
-    profile = ensureAmneziaTunRuntimeCompatibility(profile).config as MihomoConfig
-  }
 
   runtimeConfig = profile
   runtimeConfigStr = stringifyYaml(profile)
@@ -341,34 +295,6 @@ function cleanStringConfigs(profile: MihomoConfig): void {
   } else if (profile['external-ui'] === '') {
     delete partialProfile['external-ui']
     delete partialProfile['external-ui-url']
-  }
-}
-
-function configureLanSettings(profile: MihomoConfig): void {
-  const partialProfile = profile as Partial<MihomoConfig>
-
-  if (!profile['allow-lan']) {
-    delete partialProfile['lan-allowed-ips']
-    delete partialProfile['lan-disallowed-ips']
-    return
-  }
-
-  if (!profile['allow-lan']) {
-    delete partialProfile['allow-lan']
-    delete partialProfile['lan-allowed-ips']
-    delete partialProfile['lan-disallowed-ips']
-    return
-  }
-
-  const allowedIps = profile['lan-allowed-ips']
-  if (allowedIps?.length === 0) {
-    delete partialProfile['lan-allowed-ips']
-  } else if (allowedIps && !allowedIps.some((ip: string) => ip.startsWith('127.0.0.1/'))) {
-    allowedIps.push('127.0.0.1/8')
-  }
-
-  if (profile['lan-disallowed-ips']?.length === 0) {
-    delete partialProfile['lan-disallowed-ips']
   }
 }
 
