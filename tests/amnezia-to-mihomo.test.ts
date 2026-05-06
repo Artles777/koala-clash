@@ -72,7 +72,7 @@ describe('Amnezia Mihomo-native WireGuard conversion', () => {
     assert.deepEqual(result.config['proxy-groups'][0], {
       name: 'PROXY',
       type: 'fallback',
-      proxies: ['Test Amnezia', 'DIRECT'],
+      proxies: ['Test Amnezia'],
       url: 'http://www.gstatic.com/generate_204',
       interval: 60,
       lazy: true
@@ -96,7 +96,7 @@ describe('Amnezia Mihomo-native WireGuard conversion', () => {
     const group = result.config['proxy-groups'][0]
 
     assert.equal(group.type, 'select')
-    assert.deepEqual(group.proxies, ['Test Amnezia', 'DIRECT'])
+    assert.deepEqual(group.proxies, ['Test Amnezia'])
     assert.deepEqual(result.config.rules, [
       'IP-CIDR,162.159.192.1/32,DIRECT,no-resolve',
       'MATCH,PROXY'

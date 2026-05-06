@@ -102,7 +102,7 @@ export function createAmneziaMihomoNativeProfile(
     ? {
         name: groupName,
         type: 'fallback',
-        proxies: [proxyName, 'DIRECT'],
+        proxies: [proxyName],
         url: FALLBACK_HEALTHCHECK_URL,
         interval: FALLBACK_HEALTHCHECK_INTERVAL,
         lazy: true
@@ -110,7 +110,7 @@ export function createAmneziaMihomoNativeProfile(
     : {
         name: groupName,
         type: 'select',
-        proxies: [proxyName, 'DIRECT']
+        proxies: [proxyName]
       }
 
   return {
