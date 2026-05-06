@@ -4,6 +4,7 @@ import { deflateSync } from 'node:zlib'
 import { parseAmneziaVpnKey } from '../src/shared/lib/amnezia/parser'
 import { AmneziaImportError } from '../src/shared/lib/amnezia/errors'
 import { isAmneziaWgUnsupportedFailure } from '../src/shared/lib/amnezia/mihomo-validation'
+import { isStaleProfileYaml } from '../src/shared/lib/profile/stale-yaml'
 
 const importedAt = 1710000000000
 
@@ -164,6 +165,28 @@ describe('Mihomo amnezia-wg validation parser', () => {
     assert.equal(isAmneziaWgUnsupportedFailure('proxy parse error: invalid port'), false)
     assert.equal(isAmneziaWgUnsupportedFailure(''), false)
     assert.equal(isAmneziaWgUnsupportedFailure(undefined), false)
+  })
+})
+
+describe('isStaleProfileYaml', () => {
+  it('flags placeholder marker files as stale', () => {
+    assert.equal(isStaleProfileYaml('# placeholder amnezia profile\n'), true)
+  })
+
+  it('flags configs lacking a proxies: section as stale', () => {
+    assert.equal(isStaleProfileYaml('rules:\n  - MATCH,DIRECT\n'), true)
+  })
+
+  it('treats real Mihomo YAML as fresh', () => {
+    assert.equal(
+      isStaleProfileYaml('proxies:\n  - {name: WG, type: wireguard}\nrules:\n  - MATCH,PROXY\n'),
+      false
+    )
+  })
+
+  it('treats empty files as stale', () => {
+    assert.equal(isStaleProfileYaml(''), true)
+    assert.equal(isStaleProfileYaml('   \n'), true)
   })
 })
 

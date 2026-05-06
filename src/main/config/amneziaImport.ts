@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
-import { writeFile } from 'fs/promises'
+import { existsSync } from 'fs'
+import { readFile, unlink, writeFile } from 'fs/promises'
 import { profilePath } from '../utils/dirs'
 import { NormalizedProfile } from '../../core/profiles/normalized-profile'
 import { parseAmneziaVpnKey } from '../../shared/lib/amnezia/parser'
@@ -11,6 +12,7 @@ import {
   createAmneziaMihomoNativeYaml
 } from '../../shared/lib/amnezia/to-mihomo'
 import { isAmneziaWgUnsupportedFailure } from '../../shared/lib/amnezia/mihomo-validation'
+import { isStaleProfileYaml } from '../../shared/lib/profile/stale-yaml'
 
 export async function importAmneziaKey(raw: string): Promise<ProfileItem> {
   const normalizedRaw = raw.trim()
@@ -44,6 +46,7 @@ export async function importAmneziaKey(raw: string): Promise<ProfileItem> {
     throw new AmneziaImportError('duplicate_import', 'This profile already exists')
   }
 
+  await removeStaleProfileYaml(profileItem.id)
   await writeFile(profilePath(profileItem.id), yaml, 'utf-8')
 
   if (!profileConfig.items) profileConfig.items = []
@@ -106,6 +109,15 @@ function mapNativeSupportErrorCode(
     return 'missing_keys'
   }
   return 'unsupported_payload'
+}
+
+async function removeStaleProfileYaml(profileId: string): Promise<void> {
+  const target = profilePath(profileId)
+  if (!existsSync(target)) return
+  const existing = await readFile(target, 'utf-8').catch(() => '')
+  if (isStaleProfileYaml(existing)) {
+    await unlink(target).catch(() => {})
+  }
 }
 
 function getExecErrorDetails(error: unknown): string {
