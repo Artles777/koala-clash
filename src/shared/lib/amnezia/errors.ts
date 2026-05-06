@@ -7,6 +7,7 @@ export type AmneziaImportErrorCode =
   | 'missing_keys'
   | 'duplicate_import'
   | 'validation_failed'
+  | 'core_does_not_support_amnezia_wg'
 
 export class AmneziaImportError extends Error {
   readonly code: AmneziaImportErrorCode

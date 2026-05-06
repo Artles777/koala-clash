@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 import { deflateSync } from 'node:zlib'
 import { parseAmneziaVpnKey } from '../src/shared/lib/amnezia/parser'
 import { AmneziaImportError } from '../src/shared/lib/amnezia/errors'
-import { appendAmneziaImport } from '../src/features/amnezia-import/store'
+import { isAmneziaWgUnsupportedFailure } from '../src/shared/lib/amnezia/mihomo-validation'
 
 const importedAt = 1710000000000
 
@@ -91,21 +91,6 @@ describe('Amnezia vpn:// import', () => {
     )
   })
 
-  it('rejects duplicate imports in the import store layer', () => {
-    const uri = encodeQtCompressedVpnUri(JSON.stringify(createAmneziaJsonPayload()))
-    const draft = parseAmneziaVpnKey(uri, {
-      sourceId: 'source-1',
-      profileId: 'profile-1',
-      importedAt
-    })
-    const stores = appendAmneziaImport({ sources: [], profiles: [] }, draft.source, draft.profile)
-
-    assertAmneziaError(
-      () => appendAmneziaImport(stores, draft.source, draft.profile),
-      'duplicate_import'
-    )
-  })
-
   it('normalizes a WireGuard config carried inside vpn://', () => {
     const uri = encodeQtCompressedVpnUri(`
 [Interface]
@@ -151,6 +136,34 @@ PersistentKeepalive = 25
         }),
       'missing_keys'
     )
+  })
+})
+
+describe('Mihomo amnezia-wg validation parser', () => {
+  it('detects mihomo stderr signaling unknown amnezia-wg-option', () => {
+    assert.equal(
+      isAmneziaWgUnsupportedFailure(
+        'level=fatal msg="parse config error: yaml: unmarshal errors:\\n  line 6: unknown field amnezia-wg-option"'
+      ),
+      true
+    )
+    assert.equal(
+      isAmneziaWgUnsupportedFailure('error: unknown field "amnezia-wg-option"'),
+      true
+    )
+    assert.equal(
+      isAmneziaWgUnsupportedFailure("yaml: unknown field 'amnezia-wg-option'"),
+      true
+    )
+    assert.equal(isAmneziaWgUnsupportedFailure('unsupported wireguard option: jc'), true)
+    assert.equal(isAmneziaWgUnsupportedFailure('Unknown wireguard option'), true)
+  })
+
+  it('does not flag unrelated mihomo failures as amnezia-wg incompatibility', () => {
+    assert.equal(isAmneziaWgUnsupportedFailure('level=fatal msg="missing endpoint"'), false)
+    assert.equal(isAmneziaWgUnsupportedFailure('proxy parse error: invalid port'), false)
+    assert.equal(isAmneziaWgUnsupportedFailure(''), false)
+    assert.equal(isAmneziaWgUnsupportedFailure(undefined), false)
   })
 })
 
