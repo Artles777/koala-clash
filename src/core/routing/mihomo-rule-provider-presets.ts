@@ -1,6 +1,11 @@
-import type { MihomoRoutingConfig } from './amnezia-helper-routing'
+export interface MihomoRoutingConfig {
+  rules?: unknown[]
+  'rule-providers'?: unknown
+  [key: string]: unknown
+}
 
 export const KOALA_RU_BUNDLE_RULE_PROVIDER_NAME = 'ru-bundle'
+export const KOALA_RU_BUNDLE_RULE_TARGET = 'DIRECT'
 export const KOALA_RU_BUNDLE_RULE_PROVIDER = {
   type: 'http',
   behavior: 'domain',
@@ -11,13 +16,18 @@ export const KOALA_RU_BUNDLE_RULE_PROVIDER = {
   proxy: 'DIRECT'
 } as const
 
-export function createKoalaRuBundleRule(target: string): string {
-  return `RULE-SET,${KOALA_RU_BUNDLE_RULE_PROVIDER_NAME},${target.trim()}`
+export function createKoalaRuBundleRule(): string {
+  return `RULE-SET,${KOALA_RU_BUNDLE_RULE_PROVIDER_NAME},${KOALA_RU_BUNDLE_RULE_TARGET}`
 }
 
 export function isKoalaRuBundleRuleString(rule: string): boolean {
   const [type, value] = rule.split(',').map((part) => part.trim())
   return type?.toUpperCase() === 'RULE-SET' && value === KOALA_RU_BUNDLE_RULE_PROVIDER_NAME
+}
+
+function isMihomoMatchRuleString(rule: string): boolean {
+  const [type] = rule.split(',').map((part) => part.trim())
+  return type?.toUpperCase() === 'MATCH'
 }
 
 export function pinKoalaRuBundleRulesLast(rules: string[]): string[] {
@@ -26,14 +36,31 @@ export function pinKoalaRuBundleRulesLast(rules: string[]): string[] {
 
   for (const rule of rules) {
     if (isKoalaRuBundleRuleString(rule)) {
-      ruBundleRules.push(rule)
+      ruBundleRules.push(normalizeKoalaRuBundleRule(rule))
     } else {
       regularRules.push(rule)
     }
   }
 
   const pinnedRule = ruBundleRules[ruBundleRules.length - 1]
-  return pinnedRule ? [...regularRules, pinnedRule] : regularRules
+  if (!pinnedRule) return regularRules
+
+  // MATCH is terminal in Mihomo; rules after it are unreachable.
+  const firstMatchIndex = regularRules.findIndex(isMihomoMatchRuleString)
+  if (firstMatchIndex === -1) return [...regularRules, pinnedRule]
+
+  return [
+    ...regularRules.slice(0, firstMatchIndex),
+    pinnedRule,
+    ...regularRules.slice(firstMatchIndex)
+  ]
+}
+
+function normalizeKoalaRuBundleRule(rule: string): string {
+  const parts = rule.split(',').map((part) => part.trim())
+  const target = parts[2] || KOALA_RU_BUNDLE_RULE_TARGET
+  const extras = parts.slice(3).filter((part) => part.length > 0)
+  return ['RULE-SET', KOALA_RU_BUNDLE_RULE_PROVIDER_NAME, target, ...extras].join(',')
 }
 
 export function ensureMihomoRuleProviderPresets<T extends MihomoRoutingConfig>(config: T): T {
