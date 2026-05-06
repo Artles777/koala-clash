@@ -16,16 +16,12 @@ import axios, { AxiosResponse } from 'axios'
 import https from 'https'
 import { parseYaml, stringifyYaml } from '../utils/yaml'
 import { defaultProfile } from '../utils/template'
+import { validateMihomoProfileShape } from '../../core/profiles/profile-validation'
 import { dirname, join } from 'path'
 import { deepMerge } from '../utils/merge'
 import { getUserAgent } from '../utils/userAgent'
 import { getHWID, getDeviceOS, getOSVersion, getDeviceModel } from '../utils/deviceInfo'
 import { t } from '../utils/i18n'
-import {
-  createMihomoManagedProfileFields,
-  getProfileRuntimeCapabilities,
-  upgradeProfileConfigForManagedProfiles
-} from '../../core/profiles/managed-profile'
 
 let profileConfig: ProfileConfig // profile.yaml
 
@@ -35,17 +31,15 @@ export async function getProfileConfig(force = false): Promise<ProfileConfig> {
     profileConfig = parseYaml(data) || { items: [] }
   }
   if (typeof profileConfig !== 'object') profileConfig = { items: [] }
-  const upgraded = upgradeProfileConfigForManagedProfiles(profileConfig)
-  if (upgraded.changed) {
-    profileConfig = upgraded.config as ProfileConfig
-    await writeFile(profileConfigPath(), stringifyYaml(profileConfig), 'utf-8')
-  }
+  if (!Array.isArray(profileConfig.items)) profileConfig.items = []
   return profileConfig
 }
 
 export async function setProfileConfig(config: ProfileConfig): Promise<void> {
-  const upgraded = upgradeProfileConfigForManagedProfiles(config)
-  profileConfig = upgraded.config as ProfileConfig
+  profileConfig = {
+    ...config,
+    items: Array.isArray(config.items) ? config.items : []
+  }
   await writeFile(profileConfigPath(), stringifyYaml(profileConfig), 'utf-8')
 }
 
@@ -58,11 +52,8 @@ export async function getProfileItem(id: string | undefined): Promise<ProfileIte
 
 export async function changeCurrentProfile(id: string): Promise<void> {
   const config = await getProfileConfig()
-  const item = config.items?.find((profileItem) => profileItem.id === id)
-  if (item && !getProfileRuntimeCapabilities(item).canActivate) {
-    throw new Error('Profile runtime is not supported yet')
-  }
   const current = config.current
+  await assertProfileYamlSupported(id)
   config.current = id
   await setProfileConfig(config)
   try {
@@ -79,7 +70,6 @@ export async function changeCurrentProfile(id: string): Promise<void> {
     } else {
       await restartCore()
     }
-    await ensureCurrentAmneziaHelperRunningBestEffort()
   } catch (e) {
     config.current = current
     throw e
@@ -88,13 +78,24 @@ export async function changeCurrentProfile(id: string): Promise<void> {
   }
 }
 
-async function ensureCurrentAmneziaHelperRunningBestEffort(): Promise<void> {
+async function assertProfileYamlSupported(id: string): Promise<void> {
+  const filePath = profilePath(id)
+  if (!existsSync(filePath)) return
+  const content = await readFile(filePath, 'utf-8')
+  if (!content.trim()) return
+  let parsed: unknown
   try {
-    const { syncCurrentAmneziaHelperWithRuntimeMode } =
-      await import('../runtime/amnezia-helper-manager')
-    await syncCurrentAmneziaHelperWithRuntimeMode()
+    parsed = parseYaml(content)
   } catch (error) {
-    console.warn('[amnezia-helper] failed to auto-start current helper', error)
+    throw new Error(
+      `Profile "${id}" YAML is malformed and cannot be activated: ${(error as Error).message}`
+    )
+  }
+  const result = validateMihomoProfileShape(parsed)
+  if (!result.valid) {
+    throw new Error(
+      `Profile "${id}" cannot be activated: ${result.message ?? 'invalid Mihomo configuration.'}`
+    )
   }
 }
 
@@ -142,9 +143,7 @@ export async function removeProfileItem(id: string): Promise<void> {
   let shouldRestart = false
   if (config.current === id) {
     shouldRestart = true
-    config.current = config.items?.find(
-      (item) => getProfileRuntimeCapabilities(item).canActivate
-    )?.id
+    config.current = config.items?.[0]?.id
   }
   await setProfileConfig(config)
   if (existsSync(profilePath(id))) {
@@ -201,14 +200,11 @@ async function downloadLogoAsBase64(
 export async function createProfile(item: Partial<ProfileItem>): Promise<ProfileItem> {
   const id = item.id || new Date().getTime().toString(16)
   const type = item.type || 'local'
-  const managedFields = createMihomoManagedProfileFields(type)
   const newItem = {
     id,
     name: item.name || (type === 'remote' ? 'Remote File' : 'Local File'),
     type,
-    ...managedFields,
-    sourceType: item.sourceType ?? managedFields.sourceType,
-    source: item.source,
+    sourceType: item.sourceType,
     url: item.url,
     ua: item.ua,
     verify: item.verify ?? true,
