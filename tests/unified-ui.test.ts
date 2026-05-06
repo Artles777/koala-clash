@@ -127,11 +127,11 @@ describe('unified UI view models', () => {
       owner: owners[0],
       type: 'RULE-SET',
       value: 'ru-bundle',
-      target: 'DIRECT'
+      target: 'PROXY'
     })
 
-    assert.equal(createKoalaRuBundleRule(), 'RULE-SET,ru-bundle,DIRECT')
-    assert.equal(plan.serializedRule, 'RULE-SET,ru-bundle,DIRECT')
+    assert.equal(createKoalaRuBundleRule(), 'RULE-SET,ru-bundle,PROXY')
+    assert.equal(plan.serializedRule, 'RULE-SET,ru-bundle,PROXY')
   })
 
   it('pins RU bundle rules at the end of the effective runtime rule order', () => {
@@ -144,7 +144,7 @@ describe('unified UI view models', () => {
     )
     assert.equal(added.added, true)
     assert.deepEqual(added.patch.prepend, ['DOMAIN-SUFFIX,linkedin.com,DIRECT'])
-    assert.deepEqual(added.patch.append, ['RULE-SET,ru-bundle,DIRECT'])
+    assert.deepEqual(added.patch.append, ['RULE-SET,ru-bundle,PROXY'])
 
     const patch = dedupeUnifiedRulePatchFile({
       ...createEmptyUnifiedRulePatchFile(),

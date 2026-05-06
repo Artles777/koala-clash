@@ -5,7 +5,7 @@ export interface MihomoRoutingConfig {
 }
 
 export const KOALA_RU_BUNDLE_RULE_PROVIDER_NAME = 'ru-bundle'
-export const KOALA_RU_BUNDLE_RULE_TARGET = 'DIRECT'
+export const KOALA_RU_BUNDLE_RULE_TARGET = 'PROXY'
 export const KOALA_RU_BUNDLE_RULE_PROVIDER = {
   type: 'http',
   behavior: 'domain',

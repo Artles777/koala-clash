@@ -58,6 +58,6 @@ describe('pinKoalaRuBundleRulesLast', () => {
   it('emits the default ru-bundle rule when seeded via createKoalaRuBundleRule', () => {
     const seeded = createKoalaRuBundleRule()
     const pinned = pinKoalaRuBundleRulesLast([seeded, 'MATCH,DIRECT'])
-    assert.deepEqual(pinned, ['RULE-SET,ru-bundle,DIRECT', 'MATCH,DIRECT'])
+    assert.deepEqual(pinned, ['RULE-SET,ru-bundle,PROXY', 'MATCH,DIRECT'])
   })
 })
