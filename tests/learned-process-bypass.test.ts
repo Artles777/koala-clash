@@ -1,10 +1,6 @@
 import * as assert from 'node:assert/strict'
 import { describe, it, beforeEach } from 'node:test'
 import {
-  createAmneziaHelperTunBypassResolved,
-  injectAmneziaHelperTunBypass
-} from '../src/core/routing/amnezia-helper-tun-bypass'
-import {
   injectDirectTunBypass,
   resolveDirectTunBypass
 } from '../src/core/routing/direct-tun-bypass'
@@ -146,11 +142,7 @@ describe('learned process-to-IP bypass', () => {
     assert.equal(resolution.warnings[0].code, 'unsupported_platform')
   })
 
-  it('merges helper bypass, address DIRECT exclude, and learned bypass without duplicates', async () => {
-    const helperBypass = createAmneziaHelperTunBypassResolved({
-      endpointHost: 'vpn.example.com',
-      ips: ['203.0.113.10']
-    })
+  it('merges address DIRECT exclude and learned bypass without duplicates', async () => {
     const config = {
       tun: {
         enable: true,
@@ -159,12 +151,11 @@ describe('learned process-to-IP bypass', () => {
       rules: ['IP-CIDR,203.0.113.10/32,DIRECT', 'PROCESS-NAME,Telegram,DIRECT']
     }
 
-    const withHelper = injectAmneziaHelperTunBypass(config, helperBypass).config
     const directResolution = await resolveDirectTunBypass({
-      config: withHelper,
+      config,
       enabled: true
     })
-    const withDirect = injectDirectTunBypass(withHelper, directResolution).config
+    const withDirect = injectDirectTunBypass(config, directResolution).config
     const learnedResolution = resolveLearnedProcessBypass({
       config: withDirect,
       enabled: true,

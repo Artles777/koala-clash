@@ -10,11 +10,10 @@ import {
 } from '../../../core/ui/unified-rule-management'
 
 export async function appendRuBundleToProfile(
-  profileId: string,
-  target: 'DIRECT' | 'PROXY' | 'REJECT' = 'DIRECT'
+  profileId: string
 ): Promise<boolean> {
   const patch = await readProfileRulePatch(profileId)
-  const result = appendUnifiedManagedRule(patch, createKoalaRuBundleRule(target))
+  const result = appendUnifiedManagedRule(patch, createKoalaRuBundleRule())
   await writeProfileRulePatch(profileId, result.patch)
   return result.added
 }

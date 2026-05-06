@@ -9,7 +9,8 @@ When enabled and TUN is active, Koala inspects the generated runtime rule list f
 adds transient `tun.route-exclude-address` entries only for rule types that can be translated safely:
 
 - `IP-CIDR` / `IP-CIDR6`: injected directly as route exclusions.
-- `DOMAIN`: resolved to IP addresses and injected as route exclusions.
+- `DOMAIN`: resolved to IP addresses and injected as route exclusions. This is an IP-derived partial
+  bypass, not deterministic domain-level bypass.
 - `DOMAIN-SUFFIX`: resolves only the suffix apex. Subdomains still need exact `DOMAIN` rules or
   explicit `IP-CIDR` rules for deterministic bypass.
 
@@ -23,7 +24,11 @@ Unsupported rule types keep normal Mihomo behavior and are reported in diagnosti
 - Other rule types are ignored by this compatibility layer.
 
 Generated exclusions are never written back to user profile files or rule patches. They are merged
-with the existing helper upstream TUN bypass and deduplicated in the runtime YAML only.
+with existing TUN route exclusions and deduplicated in the runtime YAML only.
+
+Diagnostics are per-rule: an `IP-CIDR` rule is reported as covered only when that exact rule produced
+an active route exclusion. Domain rules are reported as partial because runtime exclusions are based
+on the DNS answers available when the runtime config was generated.
 
 This differs from old v0.2-style expectations: a `PROCESS-NAME,Telegram,DIRECT` rule can match
 Telegram traffic inside Mihomo, but it cannot by itself create a true process-level TUN bypass. A

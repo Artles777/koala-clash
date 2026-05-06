@@ -2,19 +2,12 @@ import { createHash } from 'crypto'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { parseVlessUri } from '../../shared/lib/vless/parser'
-import { createVlessProfileMetadata } from '../../shared/lib/vless/profile-metadata'
 import { VlessParseError } from '../../shared/lib/vless/types'
 import { createVlessDisplayName, createVlessMihomoYaml } from '../../shared/lib/vless/to-mihomo'
 
 const execFileAsync = promisify(execFile)
 
-export type VlessImportErrorCode =
-  | 'parse_failed'
-  | 'duplicate_import'
-  | 'mihomo_validation_failed'
-  | 'profile_not_found'
-  | 'not_vless_profile'
-  | 'missing_profile_yaml'
+export type VlessImportErrorCode = 'parse_failed' | 'duplicate_import' | 'mihomo_validation_failed'
 
 export class VlessImportError extends Error {
   constructor(
@@ -31,11 +24,6 @@ export interface PreparedVlessImport {
   raw: string
   profile: Partial<ProfileItem> & Pick<ProfileItem, 'id' | 'name' | 'type'>
   yaml: string
-}
-
-export interface VlessProfileValidationResult {
-  profileId: string
-  checkedAt: number
 }
 
 export interface VlessImportRuntime {
@@ -71,9 +59,6 @@ export function prepareVlessImport(rawInput: string, now = Date.now()): Prepared
       name: createVlessDisplayName(parsed.draft),
       type: 'local',
       sourceType: 'vless_uri',
-      source: {
-        vless: createVlessProfileMetadata(parsed.draft)
-      },
       file: yaml,
       autoUpdate: false,
       updated: now
@@ -104,33 +89,6 @@ export async function importVlessUri(
   }
 
   return profileItem
-}
-
-export async function validateVlessProfile(
-  profileId: string,
-  runtime = createDefaultVlessImportRuntime()
-): Promise<VlessProfileValidationResult> {
-  const config = await runtime.getProfileConfig()
-  const profile = config.items?.find((item) => item.id === profileId)
-
-  if (!profile) {
-    throw new VlessImportError('profile_not_found', 'VLESS profile not found')
-  }
-
-  if (profile.sourceType !== 'vless_uri') {
-    throw new VlessImportError('not_vless_profile', 'This profile was not imported from VLESS')
-  }
-
-  if (!profile.file) {
-    throw new VlessImportError('missing_profile_yaml', 'VLESS profile YAML is missing')
-  }
-
-  await runtime.validateMihomoYaml(profile.file)
-
-  return {
-    profileId,
-    checkedAt: runtime.now()
-  }
 }
 
 export function createDefaultVlessImportRuntime(): VlessImportRuntime {

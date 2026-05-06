@@ -242,9 +242,7 @@ function classifyAddressBackedRule(
   rule: ParsedDirectRule,
   directTunBypass?: DirectTunBypassResolution
 ): RuleBypassCapability {
-  const unsupported = directTunBypass?.unsupportedRules.some((unsupportedRule) =>
-    sameRule(unsupportedRule.rule, rule.raw)
-  )
+  const unsupported = hasUnsupportedDirectTunRule(rule, directTunBypass)
   if (unsupported) {
     return createRuleCapability(rule, {
       effectiveBypassMode: 'unsupported',
@@ -257,7 +255,8 @@ function classifyAddressBackedRule(
     })
   }
 
-  if (directTunBypass?.active) {
+  const resolvedRule = findResolvedDirectTunRule(rule, directTunBypass)
+  if (resolvedRule?.coverage === 'exact_route_exclude') {
     return createRuleCapability(rule, {
       effectiveBypassMode: 'true_bypass',
       platformSupport: 'supported',
@@ -283,9 +282,7 @@ function classifyDomainBackedRule(
   rule: ParsedDirectRule,
   directTunBypass?: DirectTunBypassResolution
 ): RuleBypassCapability {
-  const unsupported = directTunBypass?.unsupportedRules.some((unsupportedRule) =>
-    sameRule(unsupportedRule.rule, rule.raw)
-  )
+  const unsupported = hasUnsupportedDirectTunRule(rule, directTunBypass)
   if (unsupported) {
     return createRuleCapability(rule, {
       effectiveBypassMode: 'unsupported',
@@ -297,26 +294,19 @@ function classifyDomainBackedRule(
     })
   }
 
-  if (directTunBypass?.active && directTunBypass.status === 'partial') {
+  const resolvedRule = findResolvedDirectTunRule(rule, directTunBypass)
+  if (resolvedRule) {
     return createRuleCapability(rule, {
       effectiveBypassMode: 'partial_bypass',
       platformSupport: 'degraded',
       requiresPrivileges: false,
       requiresNativeBypass: false,
-      diagnosticsReason: 'domain_route_excluded_partially',
+      diagnosticsReason:
+        resolvedRule.coverage === 'partial_resolved_ip_route_exclude'
+          ? 'domain_suffix_route_excluded_partially'
+          : 'domain_route_excluded_by_ip',
       diagnosticsMessage:
-        'This DIRECT domain rule uses resolved IP route exclusions; coverage may be partial.'
-    })
-  }
-
-  if (directTunBypass?.active) {
-    return createRuleCapability(rule, {
-      effectiveBypassMode: 'true_bypass',
-      platformSupport: 'supported',
-      requiresPrivileges: false,
-      requiresNativeBypass: false,
-      diagnosticsReason: 'domain_route_excluded',
-      diagnosticsMessage: 'This DIRECT domain rule is covered by resolved runtime route exclusions.'
+        'This DIRECT domain rule uses DNS-derived IP route exclusions; coverage can change with DNS.'
     })
   }
 
@@ -389,6 +379,26 @@ function findLearnedProcessMode(
   )?.effectiveMode
 }
 
+function findResolvedDirectTunRule(
+  rule: ParsedDirectRule,
+  directTunBypass?: DirectTunBypassResolution
+) {
+  return directTunBypass?.resolvedRules.find((resolvedRule) =>
+    sameRule(resolvedRule.rule, rule.raw)
+  )
+}
+
+function hasUnsupportedDirectTunRule(
+  rule: ParsedDirectRule,
+  directTunBypass?: DirectTunBypassResolution
+): boolean {
+  return (
+    directTunBypass?.unsupportedRules.some((unsupportedRule) =>
+      sameRule(unsupportedRule.rule, rule.raw)
+    ) ?? false
+  )
+}
+
 function createRuleCapability(
   rule: ParsedDirectRule,
   capability: Omit<RuleBypassCapability, 'rule' | 'ruleType' | 'value' | 'target'>
@@ -430,6 +440,11 @@ function collectWarnings(
     }
     if (rule.effectiveBypassMode === 'learned_bypass') {
       warnings.add('Some PROCESS-NAME DIRECT rules use learned IPs, not true native bypass.')
+    }
+    if (rule.effectiveBypassMode === 'partial_bypass' && rule.ruleType.startsWith('DOMAIN')) {
+      warnings.add(
+        'Some DOMAIN DIRECT rules use DNS-derived IP exclusions, not deterministic TUN bypass.'
+      )
     }
   }
   return [...warnings]

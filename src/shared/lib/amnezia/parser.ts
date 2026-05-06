@@ -59,6 +59,11 @@ const obfuscationKeys = [
   'I3',
   'I4',
   'I5',
+  'J1',
+  'J2',
+  'J3',
+  'Itime',
+  'itime',
   'junkPacketCount',
   'junkPacketMinSize',
   'junkPacketMaxSize',
@@ -84,13 +89,7 @@ export function parseAmneziaVpnKey(
   raw: string,
   options: ParseAmneziaVpnKeyOptions
 ): AmneziaImportDraft {
-  console.debug('[amnezia-import] parser start')
-
   const decoded = decodeAmneziaVpnUri(raw)
-  console.debug('[amnezia-import] decode success', {
-    encoding: decoded.encoding,
-    byteLength: decoded.byteLength
-  })
 
   const payload = parseDecodedPayload(decoded.text)
   const profile =
@@ -98,15 +97,8 @@ export function parseAmneziaVpnKey(
       ? normalizeWireGuardProfile(payload.data, options, decoded.encoding)
       : normalizeAmneziaJsonProfile(payload.data, options, decoded.encoding)
 
-  console.debug('[amnezia-import] normalization result', {
-    id: profile.id,
-    protocol: profile.protocol,
-    endpoint: profile.transport.endpoint
-  })
-
   const validationIssues = validateNormalizedProfile(profile)
   if (validationIssues.length > 0) {
-    console.debug('[amnezia-import] validation failure', validationIssues)
     const firstIssue = validationIssues[0]
     throw new AmneziaImportError(
       mapValidationCode(firstIssue.code),
@@ -246,8 +238,7 @@ function normalizeAmneziaJsonProfile(
     protocol,
     endpoint,
     transport: {
-      type:
-        protocol === 'openvpn' || protocol === 'xray' || protocol === 'shadowsocks' ? 'tcp' : 'udp',
+      type: 'udp',
       endpoint,
       mtu
     },
@@ -339,14 +330,8 @@ function inferProtocol(
   const name = (containerName ?? '').toLowerCase()
   if (name.includes('awg')) return 'amneziawg'
   if (name.includes('wireguard')) return 'wireguard'
-  if (name.includes('openvpn')) return 'openvpn'
-  if (name.includes('ssxray') || name.includes('shadowsocks')) return 'shadowsocks'
-  if (name.includes('xray')) return 'xray'
   if ('awg' in container) return 'amneziawg'
   if ('wireguard' in container) return 'wireguard'
-  if ('openvpn' in container) return 'openvpn'
-  if ('ssxray' in container) return 'shadowsocks'
-  if ('xray' in container) return 'xray'
   return 'unknown'
 }
 
@@ -359,13 +344,7 @@ function getProtocolConfigKey(
       ? ['awg', 'wireguard']
       : protocol === 'wireguard'
         ? ['wireguard', 'awg']
-        : protocol === 'openvpn'
-          ? ['openvpn']
-          : protocol === 'shadowsocks'
-            ? ['ssxray', 'shadowsocks']
-            : protocol === 'xray'
-              ? ['xray']
-              : []
+        : []
 
   return candidates.find((candidate) => isRecord(container[candidate]))
 }
@@ -408,7 +387,7 @@ function getProfileName(
 ): string {
   return (
     asString(data.description ?? data.name ?? data.serverName) ??
-    (endpoint?.host ? `Amnezia ${endpoint.host}` : 'Amnezia VPN')
+    (endpoint?.host ? `Amnezia ${endpoint.host}` : 'Amnezia WireGuard')
   )
 }
 

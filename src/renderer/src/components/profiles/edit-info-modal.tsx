@@ -1,16 +1,18 @@
 import React, { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  Dialog, DialogClose, DialogContent, DialogFooter,
-  DialogHeader, DialogTitle
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
 } from '@renderer/components/ui/dialog'
 import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
 import { Input } from '@renderer/components/ui/input'
 import { Switch } from '@renderer/components/ui/switch'
-import {
-  Tooltip, TooltipContent, TooltipTrigger
-} from '@renderer/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip'
 import { cn } from '@renderer/lib/utils'
 import SettingItem from '../base/base-setting-item'
 import { Spinner } from '@renderer/components/ui/spinner'
@@ -19,7 +21,6 @@ import {
   readTextFile,
   mihomoHotReloadConfig,
   importVlessUri,
-  validateVlessProfile,
   importAmneziaKey
 } from '@renderer/utils/ipc'
 import {
@@ -28,12 +29,9 @@ import {
 } from '@renderer/utils/profile-import-input'
 import {
   formatVlessImportErrorMessage,
-  formatVlessParseErrorMessage,
-  getVlessProfileDetails,
-  getVlessDraftPresentation,
-  getVlessProfilePresentation,
-  getVlessTroubleshootingHints
+  getVlessProfilePresentation
 } from '@renderer/utils/vless-profile-presentation'
+import { formatAmneziaImportErrorMessage } from '@renderer/utils/amnezia-profile-presentation'
 import { useTranslation } from 'react-i18next'
 import {
   ClipboardPaste,
@@ -60,49 +58,34 @@ const EditInfoModal: React.FC<Props> = (props) => {
   const [urlTouched, setUrlTouched] = useState(false)
   const [localFileName, setLocalFileName] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [validatingVless, setValidatingVless] = useState(false)
   const closeRef = useRef<HTMLButtonElement>(null)
 
   const isNew = !item.id
   const isLocal = values.type === 'local'
   const importInput = classifyProfileImportInput(values.url || '')
-  const vlessInvalid = importInput.kind === 'vless_uri' && importInput.vless?.ok === false
-  const vlessErrorMessage = vlessInvalid && importInput.vless?.ok === false
-    ? formatVlessParseErrorMessage(importInput.vless.errors[0], t)
-    : undefined
   const importInputErrorMessage =
-    vlessErrorMessage ||
-    (importInput.reason === 'unsupported_format'
+    importInput.reason === 'unsupported_format'
       ? t('profile.unsupportedImportInput')
-      : t('profile.invalidUrl'))
-  const vlessImportPreview =
-    importInput.kind === 'vless_uri' && importInput.vless?.ok
-      ? getVlessDraftPresentation(importInput.vless.draft)
-      : null
+      : t('profile.invalidUrl')
   const existingVlessPresentation = getVlessProfilePresentation(values)
-  const existingVlessDetails = getVlessProfileDetails(values, t)
-  const existingVlessHints = getVlessTroubleshootingHints(values, t)
 
-  // адрес считается недопустимым только при явном вводе (urlTouched) и признании его недействительным
-  const urlInvalid =
-    !isLocal && urlTouched && !!values.url && (importInput.kind === 'invalid' || vlessInvalid)
+  // The address is invalid only after the user has interacted with the field.
+  const urlInvalid = !isLocal && urlTouched && !!values.url && importInput.kind === 'invalid'
 
-  // для новых профилей можно импортировать либо локальный файл, либо валидный адрес (включая VLESS/Amnezia)
-  const canImport = isNew
-    ? isLocal
-      ? !!values.file
-      : importInput.kind !== 'invalid' && !vlessInvalid
-    : true
+  // New profiles can be imported from a local file or a supported input scheme.
+  const canImport = isNew ? (isLocal ? !!values.file : importInput.kind !== 'invalid') : true
 
   const onSave = async (): Promise<void> => {
     setSaving(true)
     try {
       if (isNew && !isLocal) {
-        // импорт по адресу (HTTP/S, VLESS или Amnezia)
+        // Import by scheme: http(s), vless, or vpn.
         let importedProfile: ProfileItem | undefined
         await submitProfileImportInput(values.url || '', {
           importRemoteUrl: async (url) => {
-            importedProfile = (await updateProfileItem({ ...values, type: 'remote', url })) as ProfileItem | undefined
+            importedProfile = (await updateProfileItem({ ...values, type: 'remote', url })) as
+              | ProfileItem
+              | undefined
           },
           importVlessUri: async (raw) => {
             await importVlessUri(raw)
@@ -119,7 +102,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
         closeRef.current?.click()
         return
       }
-      // сохранение существующего или локального профиля
+      // Save an existing profile or a local profile file.
       const savedProfile = (await updateProfileItem({ ...values })) as ProfileItem | undefined
       if (isNew) {
         onImported?.(savedProfile)
@@ -129,12 +112,13 @@ const EditInfoModal: React.FC<Props> = (props) => {
       }
       closeRef.current?.click()
     } catch (e) {
-      // для VLESS‑URI используем специфический формат ошибки
-      toast.error(
-        importInput.kind === 'vless_uri'
-          ? formatVlessImportErrorMessage(e, t)
-          : `${e}`
-      )
+      if (importInput.kind === 'vless_uri') {
+        toast.error(formatVlessImportErrorMessage(e, t))
+      } else if (importInput.kind === 'amnezia_key') {
+        toast.error(formatAmneziaImportErrorMessage(e, t))
+      } else {
+        toast.error(`${e}`)
+      }
     } finally {
       setSaving(false)
     }
@@ -148,7 +132,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
         setUrlTouched(true)
       }
     } catch {
-      // доступ к буферу обмена может быть запрещён
+      // Clipboard access may be denied.
     }
   }
 
@@ -193,20 +177,6 @@ const EditInfoModal: React.FC<Props> = (props) => {
     setUrlTouched(false)
   }
 
-  const handleValidateVlessProfile = async (): Promise<void> => {
-    if (!values.id) return
-    setValidatingVless(true)
-    try {
-      await validateVlessProfile(values.id)
-      toast.success(t('profile.vlessValidationPassed'))
-    } catch (e) {
-      toast.error(formatVlessImportErrorMessage(e, t))
-    } finally {
-      setValidatingVless(false)
-    }
-  }
-
-  // UI‑верстка: импорт нового профиля или редактирование существующего
   return (
     <Dialog
       open={true}
@@ -219,40 +189,40 @@ const EditInfoModal: React.FC<Props> = (props) => {
         showCloseButton={false}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        <DialogClose ref={closeRef} className='hidden' />
-        <DialogHeader className='app-drag'>
+        <DialogClose ref={closeRef} className="hidden" />
+        <DialogHeader className="app-drag">
           <DialogTitle>
             {isNew ? t('profile.importRemoteConfig') : t('profile.editInfo')}
           </DialogTitle>
         </DialogHeader>
 
         {isNew ? (
-          <div className='flex flex-col gap-3'>
+          <div className="flex flex-col gap-3">
             {isLocal ? (
-              <div className='flex flex-col gap-2'>
-                <div className='flex gap-2'>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
                   <Button
-                    variant='outline'
-                    size='sm'
-                    className='flex-1 gap-2'
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 gap-2"
                     onClick={handleSelectFile}
                   >
-                    <FileUp className='size-4' />
+                    <FileUp className="size-4" />
                     {t('profile.selectFile')}
                   </Button>
                   <Button
-                    variant='outline'
-                    size='sm'
-                    className='flex-1 gap-2'
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 gap-2"
                     onClick={handleCreateEmpty}
                   >
-                    <FilePlus2 className='size-4' />
+                    <FilePlus2 className="size-4" />
                     {t('profile.createEmpty')}
                   </Button>
                 </div>
                 {values.file && (
-                  <div className='flex items-center gap-2 text-xs text-success'>
-                    <Check className='size-3.5' />
+                  <div className="flex items-center gap-2 text-xs text-success">
+                    <Check className="size-3.5" />
                     {localFileName
                       ? `${t('profile.fileSelected')}: ${localFileName}`
                       : t('profile.blankSubscription')}
@@ -260,14 +230,14 @@ const EditInfoModal: React.FC<Props> = (props) => {
                 )}
               </div>
             ) : (
-              <div className='flex flex-col gap-1.5'>
-                <div className='relative'>
+              <div className="flex flex-col gap-1.5">
+                <div className="relative">
                   <Input
-                    data-guide='profile-import-url-input'
+                    data-guide="profile-import-url-input"
                     className={cn(
                       'h-9 pr-9',
                       urlInvalid &&
-                      'border-destructive focus-visible:border-destructive focus-visible:ring-destructive/50'
+                        'border-destructive focus-visible:border-destructive focus-visible:ring-destructive/50'
                     )}
                     placeholder={t('profile.urlPlaceholder')}
                     value={values.url || ''}
@@ -280,39 +250,28 @@ const EditInfoModal: React.FC<Props> = (props) => {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
-                        data-guide='profile-import-paste-btn'
-                        type='button'
-                        variant='ghost'
-                        size='icon-sm'
-                        className='absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground'
+                        data-guide="profile-import-paste-btn"
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
                         onClick={handlePaste}
                       >
-                        <ClipboardPaste className='size-4' />
+                        <ClipboardPaste className="size-4" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>{t('profile.pasteFromClipboard')}</TooltipContent>
                   </Tooltip>
                 </div>
                 {urlInvalid && (
-                  <p className='text-xs text-destructive'>{importInputErrorMessage}</p>
-                )}
-                {vlessImportPreview && !urlInvalid && (
-                  <div className='flex items-center gap-2 text-xs text-muted-foreground'>
-                    <Badge variant='outline' className='h-5 px-1.5 text-[10px] font-semibold'>
-                      {vlessImportPreview.badge}
-                    </Badge>
-                    <span title={vlessImportPreview.summary} className='truncate'>
-                      {vlessImportPreview.summary}
-                    </span>
-                  </div>
+                  <p className="text-xs text-destructive">{importInputErrorMessage}</p>
                 )}
               </div>
             )}
 
-            {/* Переключатель расширенных настроек */}
             <button
-              type='button'
-              className='flex items-center gap-1.5 self-start text-xs text-muted-foreground hover:text-foreground transition-colors'
+              type="button"
+              className="flex items-center gap-1.5 self-start text-xs text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => setShowAdvanced(!showAdvanced)}
             >
               <ChevronDown
@@ -325,21 +284,21 @@ const EditInfoModal: React.FC<Props> = (props) => {
             </button>
 
             {showAdvanced && (
-              <div className='rounded-xl border border-stroke/50 bg-accent/20 p-3 flex flex-col gap-2'>
+              <div className="rounded-xl border border-stroke/50 bg-accent/20 p-3 flex flex-col gap-2">
                 <SettingItem title={t('profile.profileType')}>
-                  <div className='flex gap-1'>
+                  <div className="flex gap-1">
                     <Button
-                      size='sm'
+                      size="sm"
                       variant={!isLocal ? 'default' : 'outline'}
-                      className='h-7 px-3 text-xs'
+                      className="h-7 px-3 text-xs"
                       onClick={() => switchToType('remote')}
                     >
                       {t('common.remote')}
                     </Button>
                     <Button
-                      size='sm'
+                      size="sm"
                       variant={isLocal ? 'default' : 'outline'}
-                      className='h-7 px-3 text-xs'
+                      className="h-7 px-3 text-xs"
                       onClick={() => switchToType('local')}
                     >
                       {t('common.local')}
@@ -348,7 +307,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
                 </SettingItem>
                 <SettingItem title={t('profile.name')}>
                   <Input
-                    className='h-8'
+                    className="h-8"
                     value={values.name}
                     onChange={(e) => setValues({ ...values, name: e.target.value })}
                   />
@@ -357,7 +316,7 @@ const EditInfoModal: React.FC<Props> = (props) => {
                   <>
                     <SettingItem title={t('profile.customUA')}>
                       <Input
-                        className='h-8'
+                        className="h-8"
                         value={values.ua ?? ''}
                         onChange={(e) =>
                           setValues({ ...values, ua: e.target.value.trim() || undefined })
@@ -389,18 +348,20 @@ const EditInfoModal: React.FC<Props> = (props) => {
                           values.locked && (
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <Button size='icon-sm' variant='ghost'>
-                                  <MessageCircleQuestionMark className='text-lg' />
+                                <Button size="icon-sm" variant="ghost">
+                                  <MessageCircleQuestionMark className="text-lg" />
                                 </Button>
                               </TooltipTrigger>
-                              <TooltipContent>{t('profile.updateIntervalLockedHelp')}</TooltipContent>
+                              <TooltipContent>
+                                {t('profile.updateIntervalLockedHelp')}
+                              </TooltipContent>
                             </Tooltip>
                           )
                         }
                       >
                         <Input
-                          type='number'
-                          className='h-8 w-24'
+                          type="number"
+                          className="h-8 w-24"
                           value={values.interval?.toString() ?? ''}
                           onChange={(e) =>
                             setValues({ ...values, interval: parseInt(e.target.value) })
@@ -415,74 +376,32 @@ const EditInfoModal: React.FC<Props> = (props) => {
             )}
           </div>
         ) : (
-          // Блок редактирования существующего профиля
-          <div className='flex flex-col gap-3 overflow-y-auto max-h-[60vh]'>
-            <div className='rounded-xl border border-stroke/50 bg-accent/20 p-3 flex flex-col gap-2'>
+          <div className="flex flex-col gap-3 overflow-y-auto max-h-[60vh]">
+            <div className="rounded-xl border border-stroke/50 bg-accent/20 p-3 flex flex-col gap-2">
               <SettingItem title={t('profile.name')}>
                 <Input
-                  className='h-8'
+                  className="h-8"
                   value={values.name}
                   onChange={(e) => setValues({ ...values, name: e.target.value })}
                 />
               </SettingItem>
               {existingVlessPresentation && (
-                <div className='rounded-xl border border-stroke/50 bg-accent/20 p-3 flex flex-col gap-3'>
-                  <div className='flex items-center justify-between gap-3'>
-                    <div className='flex min-w-0 items-center gap-2'>
-                      <Badge variant='outline' className='h-5 px-1.5 text-[10px] font-semibold'>
-                        {existingVlessPresentation.badge}
-                      </Badge>
-                      <span
-                        title={existingVlessPresentation.summary}
-                        className='truncate text-xs text-muted-foreground'
-                      >
-                        {existingVlessPresentation.summary}
-                      </span>
-                    </div>
-                    <Button
-                      type='button'
-                      size='sm'
-                      variant='outline'
-                      className='h-7 px-2 text-xs shrink-0'
-                      disabled={validatingVless}
-                      onClick={handleValidateVlessProfile}
-                    >
-                      <span className='relative inline-flex items-center justify-center'>
-                        {validatingVless && <Spinner className='size-3.5 absolute' />}
-                        <span className={validatingVless ? 'invisible' : undefined}>
-                          {t('profile.validateVlessProfile')}
-                        </span>
-                      </span>
-                    </Button>
-                  </div>
-                  <div className='grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs'>
-                    {existingVlessDetails.map((row) => (
-                      <React.Fragment key={row.label}>
-                        <span className='text-muted-foreground'>{row.label}</span>
-                        <span title={row.value} className='truncate text-foreground'>
-                          {row.value}
-                        </span>
-                      </React.Fragment>
-                    ))}
-                  </div>
-                  {existingVlessHints.length > 0 && (
-                    <div className='rounded-lg border border-stroke/40 bg-background/30 p-2'>
-                      <div className='mb-1 text-xs font-medium'>
-                        {t('profile.vlessTroubleshootingTitle')}
-                      </div>
-                      <ul className='space-y-1 text-xs text-muted-foreground'>
-                        {existingVlessHints.map((hint) => (
-                          <li key={hint}>{hint}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+                <div className="rounded-xl border border-stroke/50 bg-accent/20 p-3 flex items-center gap-2">
+                  <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-semibold">
+                    {existingVlessPresentation.badge}
+                  </Badge>
+                  <span
+                    title={existingVlessPresentation.summary}
+                    className="truncate text-xs text-muted-foreground"
+                  >
+                    {existingVlessPresentation.summary}
+                  </span>
                 </div>
               )}
               {values.type === 'remote' && (
                 <SettingItem title={t('profile.subscriptionAddress')}>
                   <Input
-                    className='h-8'
+                    className="h-8"
                     value={values.url}
                     onChange={(e) => setValues({ ...values, url: e.target.value })}
                   />
@@ -490,10 +409,10 @@ const EditInfoModal: React.FC<Props> = (props) => {
               )}
             </div>
             {values.type === 'remote' && (
-              <div className='rounded-xl border border-stroke/50 bg-accent/20 p-3 flex flex-col gap-2'>
+              <div className="rounded-xl border border-stroke/50 bg-accent/20 p-3 flex flex-col gap-2">
                 <SettingItem title={t('profile.customUA')}>
                   <Input
-                    className='h-8'
+                    className="h-8"
                     value={values.ua ?? ''}
                     onChange={(e) =>
                       setValues({ ...values, ua: e.target.value.trim() || undefined })
@@ -525,8 +444,8 @@ const EditInfoModal: React.FC<Props> = (props) => {
                       values.locked && (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button size='icon-sm' variant='ghost'>
-                              <MessageCircleQuestionMark className='text-lg' />
+                            <Button size="icon-sm" variant="ghost">
+                              <MessageCircleQuestionMark className="text-lg" />
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>{t('profile.updateIntervalLockedHelp')}</TooltipContent>
@@ -535,12 +454,10 @@ const EditInfoModal: React.FC<Props> = (props) => {
                     }
                   >
                     <Input
-                      type='number'
-                      className='h-8 w-24'
+                      type="number"
+                      className="h-8 w-24"
                       value={values.interval?.toString() ?? ''}
-                      onChange={(e) =>
-                        setValues({ ...values, interval: parseInt(e.target.value) })
-                      }
+                      onChange={(e) => setValues({ ...values, interval: parseInt(e.target.value) })}
                       disabled={values.locked}
                     />
                   </SettingItem>
@@ -552,18 +469,18 @@ const EditInfoModal: React.FC<Props> = (props) => {
 
         <DialogFooter>
           <DialogClose asChild>
-            <Button size='sm' variant='ghost'>
+            <Button size="sm" variant="ghost">
               {t('common.cancel')}
             </Button>
           </DialogClose>
           <Button
-            size='sm'
+            size="sm"
             onClick={onSave}
             disabled={!canImport || saving}
             data-guide={isNew ? 'profile-import-submit' : undefined}
           >
-            <span className='relative inline-flex items-center justify-center'>
-              {saving && <Spinner className='size-4 absolute' />}
+            <span className="relative inline-flex items-center justify-center">
+              {saving && <Spinner className="size-4 absolute" />}
               <span className={saving ? 'invisible' : undefined}>
                 {isNew ? t('common.import') : t('common.save')}
               </span>

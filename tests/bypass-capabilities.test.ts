@@ -39,6 +39,15 @@ const directResolved: DirectTunBypassResolution = {
   failedRuleCount: 0,
   resolvedAddressCount: 1,
   routeExcludeAddresses: ['149.154.160.0/20'],
+  resolvedRules: [
+    {
+      rule: 'IP-CIDR,149.154.160.0/20,DIRECT',
+      ruleType: 'IP-CIDR',
+      value: '149.154.160.0/20',
+      routeExcludeAddresses: ['149.154.160.0/20'],
+      coverage: 'exact_route_exclude'
+    }
+  ],
   warnings: [],
   unsupportedRules: [],
   resolvedAt: 1_700_000_000_000
@@ -104,6 +113,61 @@ describe('bypass capability model', () => {
 
     assert.equal(report.rules[0].effectiveBypassMode, 'true_bypass')
     assert.equal(report.summary.trueBypassRuleCount, 1)
+  })
+
+  it('does not treat unrelated IP-CIDR rules as covered by another route exclusion', () => {
+    const report = evaluateBypassCapabilities({
+      config: {
+        tun: { enable: true },
+        rules: ['IP-CIDR,149.154.160.0/20,DIRECT', 'IP-CIDR,203.0.113.0/24,DIRECT']
+      },
+      platform: 'darwin',
+      nativeProcessBypass: nativeCapability(),
+      directTunBypass: directResolved,
+      now: () => 1
+    })
+
+    assert.equal(report.rules[0].effectiveBypassMode, 'true_bypass')
+    assert.equal(report.rules[1].effectiveBypassMode, 'direct_only')
+    assert.equal(report.summary.trueBypassRuleCount, 1)
+    assert.equal(report.summary.directOnlyRuleCount, 1)
+  })
+
+  it('reports domain route exclusions as partial because they are DNS-derived', () => {
+    const domainResolved: DirectTunBypassResolution = {
+      ...directResolved,
+      status: 'resolved',
+      directRuleCount: 1,
+      excludableRuleCount: 1,
+      supportedRuleCount: 1,
+      resolvedAddressCount: 1,
+      routeExcludeAddresses: ['149.154.167.99/32'],
+      resolvedRules: [
+        {
+          rule: 'DOMAIN,telegram.org,DIRECT',
+          ruleType: 'DOMAIN',
+          value: 'telegram.org',
+          routeExcludeAddresses: ['149.154.167.99/32'],
+          coverage: 'resolved_ip_route_exclude'
+        }
+      ]
+    }
+    const report = evaluateBypassCapabilities({
+      config: {
+        tun: { enable: true },
+        rules: ['DOMAIN,telegram.org,DIRECT']
+      },
+      platform: 'darwin',
+      nativeProcessBypass: nativeCapability(),
+      directTunBypass: domainResolved,
+      now: () => 1
+    })
+
+    assert.equal(report.rules[0].effectiveBypassMode, 'partial_bypass')
+    assert.equal(report.rules[0].diagnosticsReason, 'domain_route_excluded_by_ip')
+    assert.equal(report.summary.partialBypassRuleCount, 1)
+    assert.equal(report.summary.trueBypassRuleCount, 0)
+    assert.ok(report.warnings.some((warning) => warning.includes('DNS-derived IP exclusions')))
   })
 
   it('uses native true bypass before learned bypass for PROCESS-NAME rules', () => {

@@ -12,6 +12,7 @@ import { Button } from '@renderer/components/ui/button'
 import { Textarea } from '@renderer/components/ui/textarea'
 import { Spinner } from '@renderer/components/ui/spinner'
 import { importAmneziaKey } from '@renderer/utils/ipc'
+import { formatAmneziaImportErrorMessage } from '@renderer/utils/amnezia-profile-presentation'
 import { useTranslation } from 'react-i18next'
 import { ClipboardPaste } from 'lucide-react'
 
@@ -52,7 +53,7 @@ const ImportAmneziaModal: React.FC<Props> = ({ onClose, onImported }) => {
       onImported()
       closeRef.current?.click()
     } catch (e) {
-      setError(`${e}`)
+      setError(formatAmneziaImportErrorMessage(e, t))
     } finally {
       setSaving(false)
     }

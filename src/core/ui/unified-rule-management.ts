@@ -2,19 +2,7 @@ import {
   isKoalaRuBundleRuleString,
   pinKoalaRuBundleRulesLast
 } from '../routing/mihomo-rule-provider-presets'
-import {
-  createRealtimePresetRules,
-  DISCORD_REALTIME_PRESET_ID,
-  getRealtimePresetDefinition
-} from '../routing/realtime-reliability'
-import {
-  getUnifiedRuleDisplayTarget,
-  isHiddenUnifiedRuntimeRule,
-  isUserFacingRuleTarget,
-  normalizeUnifiedRuleType,
-  UnifiedRuleItem,
-  UnifiedRuleOwner
-} from './unified-ui'
+import { normalizeUnifiedRuleType, UnifiedRuleItem, UnifiedRuleOwner } from './unified-ui'
 
 export type UnifiedRulePatchSection = 'prepend' | 'append' | 'disabled'
 export type UnifiedRulesExportFormat = 'koala-clash.unified-rules'
@@ -49,23 +37,6 @@ export interface UnifiedRuleBulkDuplicateResult {
   added: number
   skippedDuplicate: number
   invalid: UnifiedRuleBulkInvalidEntry[]
-}
-
-export interface UnifiedRealtimePresetApplyResult {
-  patch: UnifiedRulePatchFile
-  presetId: string
-  added: number
-  skippedDuplicate: number
-  processCoverage: boolean
-  domainCoverage: boolean
-}
-
-export interface UnifiedObservedIpPromotionResult {
-  patch: UnifiedRulePatchFile
-  added: number
-  skippedDuplicate: number
-  invalid: UnifiedRuleBulkInvalidEntry[]
-  promotedRules: string[]
 }
 
 interface UnifiedBulkImportEntry {
@@ -134,8 +105,6 @@ export function serializeUnifiedRuleDraft(draft: UnifiedRuleDraft): string {
   if (!type) throw new Error('Rule type is required')
   if (!value && type !== 'MATCH') throw new Error('Rule value is required')
   if (!target) throw new Error('Rule target is required')
-  if (!isUserFacingRuleTarget(target))
-    throw new Error('Internal helper targets are not user editable')
   if (type === 'MATCH') return `${type},${target}`
   return `${type},${value},${target}`
 }
@@ -150,16 +119,9 @@ export function appendUnifiedManagedRule(
     return { patch: next, added: false }
   }
 
+  addActiveRuleToPatch(next, serializedRule)
   return {
-    patch: dedupeUnifiedRulePatchFile({
-      ...next,
-      prepend: isKoalaRuBundleRuleString(serializedRule)
-        ? next.prepend
-        : [...next.prepend, serializedRule],
-      append: isKoalaRuBundleRuleString(serializedRule)
-        ? [...next.append, serializedRule]
-        : next.append
-    }),
+    patch: dedupeUnifiedRulePatchFile(next),
     added: true
   }
 }
@@ -167,19 +129,29 @@ export function appendUnifiedManagedRule(
 export function dedupeUnifiedRulePatchFile(patch: UnifiedRulePatchFile): UnifiedRulePatchFile {
   const disabled = uniqueStrings(patch.disabled)
   const disabledSet = new Set(disabled)
-  const prepend = uniqueStrings(patch.prepend.filter((rule) => !disabledSet.has(rule)))
-  const activeSet = new Set(prepend)
-  const append = uniqueStrings(
-    patch.append.filter((rule) => !disabledSet.has(rule) && !activeSet.has(rule))
-  )
-  const pinnedRules = pinActiveRuBundleRules({
-    prepend,
-    append
-  })
+  const prepend: string[] = []
+  const append: string[] = []
+  const terminalAppend: string[] = []
+  const activeSet = new Set<string>()
+
+  const addUniqueActiveRule = (rule: string, originalSection: 'prepend' | 'append'): void => {
+    if (disabledSet.has(rule) || activeSet.has(rule)) return
+    activeSet.add(rule)
+    if (isTerminalAppendRuleString(rule)) {
+      terminalAppend.push(rule)
+    } else if (originalSection === 'append') {
+      append.push(rule)
+    } else {
+      prepend.push(rule)
+    }
+  }
+
+  for (const rule of patch.prepend) addUniqueActiveRule(rule, 'prepend')
+  for (const rule of patch.append) addUniqueActiveRule(rule, 'append')
 
   return {
-    prepend: pinnedRules.prepend,
-    append: pinnedRules.append,
+    prepend,
+    append: [...append, ...pinKoalaRuBundleRulesLast(terminalAppend)],
     delete: uniqueStrings(patch.delete),
     disabled
   }
@@ -205,7 +177,7 @@ export function createUnifiedRulesForDisplay(input: {
 }): UnifiedRuleItem[] {
   const managedKeys = new Set(input.managedRules.map((rule) => getRuleIdentityKey(rule)))
   const runtimeOnlyRules = input.runtimeRules.filter(
-    (rule) => !isHiddenUnifiedRuntimeRule(rule) && !managedKeys.has(getRuleIdentityKey(rule))
+    (rule) => !managedKeys.has(getRuleIdentityKey(rule))
   )
   return [...input.managedRules, ...runtimeOnlyRules]
 }
@@ -247,7 +219,7 @@ export function moveUnifiedManagedRule(
   const currentRule = sectionRules[index]
   const targetRule = sectionRules[targetIndex]
   if (currentRule === undefined || targetRule === undefined) return next
-  if (isKoalaRuBundleRuleString(currentRule) || isKoalaRuBundleRuleString(targetRule)) return next
+  if (isTerminalAppendRuleString(currentRule) || isTerminalAppendRuleString(targetRule)) return next
 
   sectionRules[index] = targetRule
   sectionRules[targetIndex] = currentRule
@@ -267,11 +239,7 @@ export function setUnifiedManagedRuleEnabled(
 
   next[section] = removeAt(source, index)
   if (enabled) {
-    if (isKoalaRuBundleRuleString(rule)) {
-      next.append = appendUnique(next.append, rule)
-    } else {
-      next.prepend = appendUnique(next.prepend, rule)
-    }
+    addActiveRuleToPatch(next, rule)
   } else {
     next.disabled = appendUnique(next.disabled, rule)
   }
@@ -288,11 +256,7 @@ export function duplicateUnifiedManagedRuleToOwner(input: {
   if (!rule) return clonePatch(input.targetPatch)
 
   const nextTarget = clonePatch(input.targetPatch)
-  if (isKoalaRuBundleRuleString(rule)) {
-    nextTarget.append = appendUnique(nextTarget.append, rule)
-  } else {
-    nextTarget.prepend = appendUnique(nextTarget.prepend, rule)
-  }
+  addActiveRuleToPatch(nextTarget, rule)
   return dedupeUnifiedRulePatchFile(nextTarget)
 }
 
@@ -322,13 +286,13 @@ export function setUnifiedManagedRulesEnabled(
 
   for (const rule of selected) {
     if (enabled) {
-      next.prepend = appendUnique(next.prepend, rule)
+      addActiveRuleToPatch(next, rule)
     } else {
       next.disabled = appendUnique(next.disabled, rule)
     }
   }
 
-  return next
+  return dedupeUnifiedRulePatchFile(next)
 }
 
 export function removeUnifiedManagedRules(
@@ -341,7 +305,6 @@ export function removeUnifiedManagedRules(
 }
 
 export function duplicateUnifiedManagedRulesToOwner(input: {
-  targetOwner: UnifiedRuleOwner
   targetPatch: UnifiedRulePatchFile
   rules: UnifiedRuleItem[]
 }): UnifiedRuleBulkDuplicateResult {
@@ -356,7 +319,7 @@ export function duplicateUnifiedManagedRulesToOwner(input: {
       invalid.push({ value: rule.value, reason: 'read_only' })
       continue
     }
-    if (!isTargetSupportedByOwner(input.targetOwner, rule.target)) {
+    if (!rule.target.trim()) {
       invalid.push({ value: rule.value, reason: 'unsupported_target' })
       continue
     }
@@ -371,11 +334,7 @@ export function duplicateUnifiedManagedRulesToOwner(input: {
         skippedDuplicate += 1
         continue
       }
-      if (isKoalaRuBundleRuleString(serializedRule)) {
-        next.append.push(serializedRule)
-      } else {
-        next.prepend.push(serializedRule)
-      }
+      addActiveRuleToPatch(next, serializedRule)
       existing.add(serializedRule)
       added += 1
     } catch (e) {
@@ -416,11 +375,7 @@ export function importUnifiedRulesToPatch(input: {
         skippedDuplicate += 1
         continue
       }
-      if (isKoalaRuBundleRuleString(serializedRule)) {
-        next.append.push(serializedRule)
-      } else {
-        next.prepend.push(serializedRule)
-      }
+      addActiveRuleToPatch(next, serializedRule)
       existing.add(serializedRule)
       added += 1
     } catch (e) {
@@ -429,100 +384,6 @@ export function importUnifiedRulesToPatch(input: {
   }
 
   return { patch: dedupeUnifiedRulePatchFile(next), added, skippedDuplicate, invalid }
-}
-
-export function applyDiscordRealtimePresetToPatch(
-  patch: UnifiedRulePatchFile,
-  target = 'PROXY'
-): UnifiedRealtimePresetApplyResult {
-  return applyRealtimePresetToPatch({
-    patch,
-    presetId: DISCORD_REALTIME_PRESET_ID,
-    target
-  })
-}
-
-export function applyRealtimePresetToPatch(input: {
-  patch: UnifiedRulePatchFile
-  presetId: string
-  target?: string
-}): UnifiedRealtimePresetApplyResult {
-  const next = clonePatch(input.patch)
-  const existing = createPatchRuleSet(next)
-  let added = 0
-  let skippedDuplicate = 0
-  const target = input.target ?? 'PROXY'
-  const definition = getRealtimePresetDefinition(input.presetId)
-
-  for (const rule of createRealtimePresetRules(input.presetId, target)) {
-    if (existing.has(rule)) {
-      skippedDuplicate += 1
-      continue
-    }
-    next.prepend.push(rule)
-    existing.add(rule)
-    added += 1
-  }
-
-  return {
-    patch: dedupeUnifiedRulePatchFile(next),
-    presetId: input.presetId,
-    added,
-    skippedDuplicate,
-    processCoverage: (definition?.processNames.length ?? 0) > 0,
-    domainCoverage:
-      (definition?.domains.length ?? 0) > 0 || (definition?.domainSuffixes.length ?? 0) > 0
-  }
-}
-
-export function promoteObservedIpsToUnifiedRules(input: {
-  patch: UnifiedRulePatchFile
-  observedIps: string[]
-  target?: string
-}): UnifiedObservedIpPromotionResult {
-  const next = clonePatch(input.patch)
-  const target = input.target ?? 'PROXY'
-  const existing = createPatchRuleSet(next)
-  const invalid: UnifiedRuleBulkInvalidEntry[] = []
-  const promotedRules: string[] = []
-  let added = 0
-  let skippedDuplicate = 0
-
-  if (!isUserFacingRuleTarget(target)) {
-    return {
-      patch: dedupeUnifiedRulePatchFile(next),
-      added,
-      skippedDuplicate,
-      invalid: input.observedIps.map((ip) => ({ value: ip, reason: 'unsupported_target' })),
-      promotedRules
-    }
-  }
-
-  for (const observedIp of uniqueStrings(input.observedIps)) {
-    const cidr = normalizeObservedIpToIpv4Cidr(observedIp)
-    if (!cidr) {
-      invalid.push({ value: observedIp, reason: 'unsupported_ip' })
-      continue
-    }
-
-    const rule = `IP-CIDR,${cidr},${target}`
-    if (existing.has(rule)) {
-      skippedDuplicate += 1
-      continue
-    }
-    next.prepend.push(rule)
-    existing.add(rule)
-    promotedRules.push(rule)
-    added += 1
-  }
-
-  return {
-    patch: dedupeUnifiedRulePatchFile(next),
-    added,
-    skippedDuplicate,
-    invalid,
-    promotedRules
-  }
 }
 
 export function createUnifiedRulesExportDocument(
@@ -539,8 +400,8 @@ export function createUnifiedRulesExportDocument(
       ownerProfileName: rule.ownerProfileName,
       type: rule.type,
       value: rule.value,
-      target: isUserFacingRuleTarget(rule.target) ? rule.target : 'PROXY',
-      displayTarget: getUnifiedRuleDisplayTarget(rule.ownerType, rule.target),
+      target: rule.target,
+      displayTarget: rule.target,
       enabled: rule.enabled,
       note: rule.note
     }))
@@ -562,18 +423,15 @@ function mapPatchSection(
 ): UnifiedRuleItem[] {
   return rules.map((raw, index) => {
     const parsed = parseRuleString(raw)
-    const target = isUserFacingRuleTarget(parsed.target) ? parsed.target : 'PROXY'
     return {
       id: `managed-${owner.id}-${section}-${index}`,
       scopeId: owner.scopeId,
-      source: owner.ownerType,
       ownerType: owner.ownerType,
       ownerProfileId: owner.ownerProfileId,
       ownerProfileName: owner.ownerProfileName,
       type: normalizeUnifiedRuleType(parsed.type),
       value: parsed.value,
-      target,
-      internalTarget: target === parsed.target ? undefined : parsed.target,
+      target: parsed.target,
       enabled,
       editable: true,
       note: parsed.additionalParams.length > 0 ? parsed.additionalParams.join(',') : undefined,
@@ -609,7 +467,7 @@ function getRuleIdentityKey(rule: UnifiedRuleItem): string {
     rule.ownerProfileId ?? rule.ownerType,
     normalizeUnifiedRuleType(rule.type),
     rule.value.trim().toLowerCase(),
-    getUnifiedRuleDisplayTarget(rule.ownerType, rule.target)
+    rule.target
   ].join('\u0000')
 }
 
@@ -619,23 +477,6 @@ function clonePatch(patch: UnifiedRulePatchFile): UnifiedRulePatchFile {
     append: [...patch.append],
     delete: [...patch.delete],
     disabled: [...patch.disabled]
-  }
-}
-
-function pinActiveRuBundleRules(patch: Pick<UnifiedRulePatchFile, 'prepend' | 'append'>): {
-  prepend: string[]
-  append: string[]
-} {
-  const prepend = patch.prepend.filter((rule) => !isKoalaRuBundleRuleString(rule))
-  const append = patch.append.filter((rule) => !isKoalaRuBundleRuleString(rule))
-  const pinned = pinKoalaRuBundleRulesLast([...patch.prepend, ...patch.append]).filter(
-    isKoalaRuBundleRuleString
-  )
-  const pinnedRule = pinned[pinned.length - 1]
-
-  return {
-    prepend,
-    append: pinnedRule ? [...append, pinnedRule] : append
   }
 }
 
@@ -651,6 +492,24 @@ function removeAt(items: string[], index: number): string[] {
 
 function appendUnique(items: string[], value: string): string[] {
   return items.includes(value) ? items : [...items, value]
+}
+
+function addActiveRuleToPatch(patch: UnifiedRulePatchFile, rule: string): void {
+  if (isTerminalAppendRuleString(rule)) {
+    patch.append = appendUnique(patch.append, rule)
+    return
+  }
+
+  patch.prepend = appendUnique(patch.prepend, rule)
+}
+
+function isTerminalAppendRuleString(rule: string): boolean {
+  return isKoalaRuBundleRuleString(rule) || isMatchRuleString(rule)
+}
+
+function isMatchRuleString(rule: string): boolean {
+  const [type] = rule.split(',').map((part) => part.trim())
+  return normalizeUnifiedRuleType(type ?? '') === 'MATCH'
 }
 
 function uniqueStrings(items: string[]): string[] {
@@ -770,30 +629,6 @@ function isValidIpv4Cidr(value: string): boolean {
       return value >= 0 && value <= 255
     })
   )
-}
-
-function normalizeObservedIpToIpv4Cidr(value: string): string | undefined {
-  const normalized = value.trim()
-  if (!normalized) return undefined
-  if (normalized.includes('/')) return isValidIpv4Cidr(normalized) ? normalized : undefined
-  return isValidIpv4Address(normalized) ? `${normalized}/32` : undefined
-}
-
-function isValidIpv4Address(value: string): boolean {
-  const octets = value.split('.')
-  return (
-    octets.length === 4 &&
-    octets.every((octet) => {
-      if (!/^\d+$/.test(octet)) return false
-      const parsed = Number(octet)
-      return parsed >= 0 && parsed <= 255
-    })
-  )
-}
-
-function isTargetSupportedByOwner(owner: UnifiedRuleOwner, target: string): boolean {
-  if (owner.ownerType !== 'amnezia') return isUserFacingRuleTarget(target)
-  return target === 'PROXY' || target === 'DIRECT' || target === 'REJECT'
 }
 
 function getErrorMessage(error: unknown): string {

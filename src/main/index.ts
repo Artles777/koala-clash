@@ -13,7 +13,6 @@ import {
 } from 'electron'
 import { addProfileItem, getAppConfig, patchControledMihomoConfig } from './config'
 import { quitWithoutCore, startCore, stopCore } from './core/manager'
-import { stopAllAmneziaHelpers } from './runtime/amnezia-helper-manager'
 import { triggerSysProxy } from './sys/sysproxy'
 import icon from '../../resources/icon.png?asset'
 import { createTray } from './resolve/tray'
@@ -244,7 +243,6 @@ app.on('before-quit', async (e) => {
         quitTimeout = null
       }
       triggerSysProxy(false, false)
-      await stopAllAmneziaHelpers('app_shutdown')
       await stopCore()
       app.exit()
       return
@@ -260,7 +258,6 @@ app.on('before-quit', async (e) => {
         quitTimeout = null
       }
       triggerSysProxy(false, false)
-      await stopAllAmneziaHelpers('app_shutdown')
       await stopCore()
       app.exit()
     }
@@ -271,7 +268,6 @@ app.on('before-quit', async (e) => {
       quitTimeout = null
     }
     triggerSysProxy(false, false)
-    await stopAllAmneziaHelpers('app_shutdown')
     await stopCore()
     app.exit()
   }
@@ -283,7 +279,6 @@ powerMonitor.on('shutdown', async () => {
     quitTimeout = null
   }
   triggerSysProxy(false, false)
-  await stopAllAmneziaHelpers('app_shutdown')
   await stopCore()
   app.exit()
 })

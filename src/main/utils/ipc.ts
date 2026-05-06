@@ -44,25 +44,7 @@ import {
   setProfileConfig,
   convertMrsRuleset,
   importVlessUri,
-  validateVlessProfile,
-  importAmneziaKey,
-  getAmneziaProfileDetails,
-  getAmneziaHelperRules,
-  getAmneziaHelperRulePacks,
-  addAmneziaHelperRulePack,
-  updateAmneziaHelperRulePack,
-  addAmneziaHelperRule,
-  updateAmneziaHelperRule,
-  removeAmneziaHelperRule,
-  bulkAddAmneziaHelperRules,
-  exportAmneziaHelperRulePacks,
-  importAmneziaHelperRulePacks,
-  evaluateAmneziaHelperRouting,
-  getAmneziaHelperSupportSnapshot,
-  exportAmneziaHelperDiagnosticsBundle,
-  runRealtimePresetValidation,
-  runRealtimePresetSmoke,
-  confirmRealtimePresetValidation
+  importAmneziaKey
 } from '../config'
 import {
   manualGrantCorePermition,
@@ -71,7 +53,8 @@ import {
   startNetworkDetection,
   stopNetworkDetection,
   revokeCorePermission,
-  checkCorePermission
+  checkCorePermission,
+  getBuiltinCoreAvailability
 } from '../core/manager'
 import { triggerSysProxy } from '../sys/sysproxy'
 import { checkUpdate, downloadAndInstallUpdate, cancelUpdate } from '../resolve/autoUpdater'
@@ -138,15 +121,6 @@ import { getAppName } from './appName'
 import { getUserAgent } from './userAgent'
 import { setLanguage } from './i18n'
 import { updateApplicationMenu } from '../resolve/menu'
-import {
-  getAmneziaHelperLogs,
-  getAmneziaHelperStartupPreflight,
-  getAmneziaHelperStatus,
-  getLastAmneziaHelperConnectivityResult,
-  startAmneziaHelper,
-  stopAmneziaHelper,
-  validateAmneziaHelperConnectivity
-} from '../runtime/amnezia-helper-manager'
 
 function ipcErrorWrapper<T>( // eslint-disable-next-line @typescript-eslint/no-explicit-any
   fn: (...args: any[]) => Promise<T> // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -231,68 +205,7 @@ export function registerIpcMainHandlers(): void {
   ipcMain.handle('changeCurrentProfile', (_e, id) => ipcErrorWrapper(changeCurrentProfile)(id))
   ipcMain.handle('addProfileItem', (_e, item) => ipcErrorWrapper(addProfileItem)(item))
   ipcMain.handle('importVlessUri', (_e, raw) => ipcErrorWrapper(importVlessUri)(raw))
-  ipcMain.handle('validateVlessProfile', (_e, id) => ipcErrorWrapper(validateVlessProfile)(id))
   ipcMain.handle('importAmneziaKey', (_e, raw) => ipcErrorWrapper(importAmneziaKey)(raw))
-  ipcMain.handle('getAmneziaProfileDetails', (_e, id) =>
-    ipcErrorWrapper(getAmneziaProfileDetails)(id)
-  )
-  ipcMain.handle('getAmneziaHelperRules', () => ipcErrorWrapper(getAmneziaHelperRules)())
-  ipcMain.handle('getAmneziaHelperRulePacks', () => ipcErrorWrapper(getAmneziaHelperRulePacks)())
-  ipcMain.handle('addAmneziaHelperRulePack', (_e, input) =>
-    ipcErrorWrapper(addAmneziaHelperRulePack)(input)
-  )
-  ipcMain.handle('updateAmneziaHelperRulePack', (_e, id, patch) =>
-    ipcErrorWrapper(updateAmneziaHelperRulePack)(id, patch)
-  )
-  ipcMain.handle('addAmneziaHelperRule', (_e, input) =>
-    ipcErrorWrapper(addAmneziaHelperRule)(input)
-  )
-  ipcMain.handle('updateAmneziaHelperRule', (_e, id, patch) =>
-    ipcErrorWrapper(updateAmneziaHelperRule)(id, patch)
-  )
-  ipcMain.handle('removeAmneziaHelperRule', (_e, id) =>
-    ipcErrorWrapper(removeAmneziaHelperRule)(id)
-  )
-  ipcMain.handle('bulkAddAmneziaHelperRules', (_e, input) =>
-    ipcErrorWrapper(bulkAddAmneziaHelperRules)(input)
-  )
-  ipcMain.handle('exportAmneziaHelperRulePacks', () =>
-    ipcErrorWrapper(exportAmneziaHelperRulePacks)()
-  )
-  ipcMain.handle('importAmneziaHelperRulePacks', (_e, content) =>
-    ipcErrorWrapper(importAmneziaHelperRulePacks)(content)
-  )
-  ipcMain.handle('startAmneziaHelper', (_e, id) => ipcErrorWrapper(startAmneziaHelper)(id))
-  ipcMain.handle('stopAmneziaHelper', (_e, id) => ipcErrorWrapper(stopAmneziaHelper)(id))
-  ipcMain.handle('getAmneziaHelperStatus', (_e, id) => ipcErrorWrapper(getAmneziaHelperStatus)(id))
-  ipcMain.handle('getAmneziaHelperStartupPreflight', (_e, id) =>
-    ipcErrorWrapper(getAmneziaHelperStartupPreflight)(id)
-  )
-  ipcMain.handle('getAmneziaHelperLogs', (_e, id) => ipcErrorWrapper(getAmneziaHelperLogs)(id))
-  ipcMain.handle('evaluateAmneziaHelperRouting', (_e, input) =>
-    ipcErrorWrapper(evaluateAmneziaHelperRouting)(input)
-  )
-  ipcMain.handle('validateAmneziaHelperConnectivity', (_e, id) =>
-    ipcErrorWrapper(validateAmneziaHelperConnectivity)(id)
-  )
-  ipcMain.handle('getLastAmneziaHelperConnectivityResult', (_e, id) =>
-    ipcErrorWrapper(getLastAmneziaHelperConnectivityResult)(id)
-  )
-  ipcMain.handle('getAmneziaHelperSupportSnapshot', (_e, id) =>
-    ipcErrorWrapper(getAmneziaHelperSupportSnapshot)(id)
-  )
-  ipcMain.handle('runRealtimePresetValidation', (_e, id, presetId) =>
-    ipcErrorWrapper(runRealtimePresetValidation)(id, presetId)
-  )
-  ipcMain.handle('runRealtimePresetSmoke', (_e, id, presetId) =>
-    ipcErrorWrapper(runRealtimePresetSmoke)(id, presetId)
-  )
-  ipcMain.handle('confirmRealtimePresetValidation', (_e, id, note, presetId) =>
-    ipcErrorWrapper(confirmRealtimePresetValidation)(id, note, presetId)
-  )
-  ipcMain.handle('exportAmneziaHelperDiagnosticsBundle', (_e, id) =>
-    ipcErrorWrapper(exportAmneziaHelperDiagnosticsBundle)(id)
-  )
   ipcMain.handle('removeProfileItem', (_e, id) => ipcErrorWrapper(removeProfileItem)(id))
   ipcMain.handle('restartCore', ipcErrorWrapper(restartCore))
   ipcMain.handle('restartMihomoConnections', ipcErrorWrapper(restartMihomoConnections))
@@ -303,6 +216,9 @@ export function registerIpcMainHandlers(): void {
     ipcErrorWrapper(manualGrantCorePermition)(cores)
   )
   ipcMain.handle('checkCorePermission', () => ipcErrorWrapper(checkCorePermission)())
+  ipcMain.handle('getBuiltinCoreAvailability', () =>
+    ipcErrorWrapper(async () => getBuiltinCoreAvailability())()
+  )
   ipcMain.handle('revokeCorePermission', (_e, cores?: ('mihomo' | 'mihomo-alpha')[]) =>
     ipcErrorWrapper(revokeCorePermission)(cores)
   )

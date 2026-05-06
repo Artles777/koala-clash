@@ -14,9 +14,12 @@ Rules are classified into one effective bypass mode:
 
 ## Current Rule Behavior
 
-- `IP-CIDR,DIRECT`: true TUN exclude when DIRECT exclude is active.
-- `DOMAIN,DIRECT`: resolved to route exclusions when possible.
-- `DOMAIN-SUFFIX,DIRECT`: resolved through the bounded apex-domain path and reported as partial when coverage is heuristic.
+- `IP-CIDR,DIRECT`: true TUN exclude only for the exact rule that generated a
+  `route-exclude-address` entry.
+- `DOMAIN,DIRECT`: partial TUN exclude when DNS lookup produced IP route exclusions; coverage can
+  change with DNS.
+- `DOMAIN-SUFFIX,DIRECT`: partial TUN exclude through the bounded apex-domain path; subdomains are
+  not deterministically covered by that single rule.
 - `PROCESS-NAME,DIRECT`: true native process bypass only when a platform adapter is active; otherwise it may fall back to learned process-to-IP bypass.
 
 ## Linux-First Native Path
@@ -41,10 +44,10 @@ The code now includes:
 - fallback precedence: native true bypass, then learned bypass, then direct-only,
 - support/debug fields for native capability and effective PROCESS-NAME mode.
 
-The main Rules page now surfaces this capability state directly on each relevant `DIRECT` rule. It
-shows a compact label such as `True bypass`, `Partial bypass`, `Learned bypass`, `DIRECT only`,
-`Fallback only`, or `No TUN bypass`, plus a short hint for platform-specific cases. These labels are
-presentation-only; they do not change Mihomo rules, helper routing, or any runtime bypass behavior.
+The capability report is runtime support/debug data. The main Rules page intentionally remains an
+ordinary Mihomo rule editor and no longer presents per-rule bypass labels as product truth. Treat the
+report as diagnostics, not as proof that live connectivity through a specific app or destination has
+already succeeded.
 
 The Linux adapter now has an MVP apply/cleanup path. It attempts to:
 
@@ -132,7 +135,7 @@ integration plan.
 
 ## Remaining Work
 
-- add a privileged Linux service/helper path so GUI launches do not need direct root/CAP_NET_ADMIN,
+- add a privileged Linux service path so GUI launches do not need direct root/CAP_NET_ADMIN,
 - replace polling with a stronger platform event/service implementation if needed,
 - implement/package/sign the Windows `KoalaProcessBypass` WFP service and controller,
 - validate the macOS Network Extension/System Extension scaffold with a real signed build before any

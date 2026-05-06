@@ -3,7 +3,7 @@ import {
   normalizeEndpointHost,
   normalizeIpList,
   normalizeRouteExcludeAddresses
-} from './amnezia-helper-tun-bypass'
+} from './route-exclude-utils'
 
 export type DirectExcludeMode = 'conservative' | 'full_supported_types'
 export type DirectExcludeOverallStatus = 'active' | 'partial' | 'blocked' | 'inactive'
@@ -38,6 +38,19 @@ export interface UnsupportedDirectTunBypassRule {
   message: string
 }
 
+export type DirectTunBypassResolvedRuleCoverage =
+  | 'exact_route_exclude'
+  | 'resolved_ip_route_exclude'
+  | 'partial_resolved_ip_route_exclude'
+
+export interface ResolvedDirectTunBypassRule {
+  rule: string
+  ruleType: string
+  value?: string
+  routeExcludeAddresses: string[]
+  coverage: DirectTunBypassResolvedRuleCoverage
+}
+
 export interface DirectTunBypassResolution {
   enabled: boolean
   mode: DirectExcludeMode
@@ -53,6 +66,7 @@ export interface DirectTunBypassResolution {
   failedRuleCount: number
   resolvedAddressCount: number
   routeExcludeAddresses: string[]
+  resolvedRules: ResolvedDirectTunBypassRule[]
   warnings: DirectTunBypassWarning[]
   unsupportedRules: UnsupportedDirectTunBypassRule[]
   resolvedAt: number
@@ -156,6 +170,7 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
   const warnings: DirectTunBypassWarning[] = []
   const unsupportedRules: UnsupportedDirectTunBypassRule[] = []
   const routeExcludeAddresses: string[] = []
+  const resolvedRules: ResolvedDirectTunBypassRule[] = []
   let supportedRuleCount = 0
   let partialRuleCount = 0
   let failedRuleCount = 0
@@ -168,6 +183,13 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
         const cidr = normalizeCidr(rule.value ?? '')
         if (cidr) {
           routeExcludeAddresses.push(cidr)
+          resolvedRules.push({
+            rule: rule.raw,
+            ruleType: rule.type,
+            value: rule.value,
+            routeExcludeAddresses: [cidr],
+            coverage: 'exact_route_exclude'
+          })
         } else {
           failedRuleCount += 1
           warnings.push(createRuleWarning('invalid_ip_cidr', rule, 'Invalid IP-CIDR DIRECT rule.'))
@@ -214,7 +236,18 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
               )
             )
           } else {
-            routeExcludeAddresses.push(...ips.map(formatRouteExcludeAddress))
+            const ruleRouteExcludeAddresses = ips.map(formatRouteExcludeAddress)
+            routeExcludeAddresses.push(...ruleRouteExcludeAddresses)
+            resolvedRules.push({
+              rule: rule.raw,
+              ruleType: rule.type,
+              value: rule.value,
+              routeExcludeAddresses: ruleRouteExcludeAddresses,
+              coverage:
+                rule.type === 'DOMAIN-SUFFIX'
+                  ? 'partial_resolved_ip_route_exclude'
+                  : 'resolved_ip_route_exclude'
+            })
             if (rule.type === 'DOMAIN-SUFFIX') {
               warnings.push(
                 createRuleWarning(
@@ -281,6 +314,12 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
 
   warnings.push(...unsupportedRules.map(unsupportedToWarning))
   const normalizedRouteExcludeAddresses = normalizeRouteExcludeAddresses(routeExcludeAddresses)
+  const normalizedResolvedRules = resolvedRules
+    .map((rule) => ({
+      ...rule,
+      routeExcludeAddresses: normalizeRouteExcludeAddresses(rule.routeExcludeAddresses)
+    }))
+    .filter((rule) => rule.routeExcludeAddresses.length > 0)
   const hasResolved = normalizedRouteExcludeAddresses.length > 0
   const hasWarnings = warnings.length > 0
   const status: DirectTunBypassStatus = hasResolved
@@ -306,6 +345,7 @@ export async function resolveDirectTunBypass<T extends DirectTunBypassConfig>(
     failedRuleCount,
     resolvedAddressCount: normalizedRouteExcludeAddresses.length,
     routeExcludeAddresses: normalizedRouteExcludeAddresses,
+    resolvedRules: normalizedResolvedRules,
     warnings,
     unsupportedRules,
     resolvedAt: now()
@@ -451,6 +491,7 @@ function createResolution(input: {
     failedRuleCount: 0,
     resolvedAddressCount: 0,
     routeExcludeAddresses: [],
+    resolvedRules: [],
     warnings: input.warnings ?? [],
     unsupportedRules: [],
     resolvedAt: input.now()

@@ -20,10 +20,9 @@ if (process.env.SKIP_PREPARE === '1') {
 }
 
 /* ======= mihomo alpha======= */
-const MIHOMO_ALPHA_VERSION_URL =
-  'https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha/version.txt'
-const MIHOMO_ALPHA_URL_PREFIX = `https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha`
-let MIHOMO_ALPHA_VERSION
+const MIHOMO_ALPHA_RELEASE_API_URL =
+  'https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/Prerelease-Alpha'
+let MIHOMO_ALPHA_ASSET
 
 const MIHOMO_ALPHA_MAP = {
   'win32-x64': 'mihomo-windows-amd64-v1',
@@ -35,26 +34,32 @@ const MIHOMO_ALPHA_MAP = {
   'linux-arm64': 'mihomo-linux-arm64'
 }
 
-// Fetch the latest alpha release version from the version.txt file
-async function getLatestAlphaVersion() {
-  try {
-    const response = await fetch(MIHOMO_ALPHA_VERSION_URL, {
-      method: 'GET'
-    })
-    let v = await response.text()
-    MIHOMO_ALPHA_VERSION = v.trim() // Trim to remove extra whitespaces
-    console.log(`Latest alpha version: ${MIHOMO_ALPHA_VERSION}`)
-  } catch (error) {
-    console.error('Error fetching latest alpha version:', error.message)
-    process.exit(1)
+async function resolveLatestAlphaAsset() {
+  const release = await fetchJson(MIHOMO_ALPHA_RELEASE_API_URL)
+  const assetPrefix = MIHOMO_ALPHA_MAP[`${platform}-${arch}`]
+  const assetExt = platform === 'win32' ? '.zip' : '.gz'
+  const assets = Array.isArray(release.assets) ? release.assets : []
+  const candidates = findReleaseAssets(assets, assetPrefix, assetExt)
+  const asset = choosePreferredAsset(candidates)
+  const releaseTag = requireString(release.tag_name, 'mihomo alpha release tag')
+
+  if (!asset) {
+    console.warn(
+      `[WARN]: mihomo-alpha has no ${platform}-${arch} ${assetExt} asset in ${releaseTag}; skipping preview core`
+    )
+    removeSidecarTarget(`mihomo-alpha${platform === 'win32' ? '.exe' : ''}`)
+    MIHOMO_ALPHA_ASSET = undefined
+    return
   }
+
+  MIHOMO_ALPHA_ASSET = asset
+  console.log(`Latest alpha asset: ${asset.name}`)
 }
 
 /* ======= mihomo release ======= */
-const MIHOMO_VERSION_URL =
-  'https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt'
-const MIHOMO_URL_PREFIX = `https://github.com/MetaCubeX/mihomo/releases/download`
+const MIHOMO_RELEASE_API_URL = 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest'
 let MIHOMO_VERSION
+let MIHOMO_ASSET
 
 const MIHOMO_MAP = {
   'win32-x64': 'mihomo-windows-amd64-v1',
@@ -66,19 +71,23 @@ const MIHOMO_MAP = {
   'linux-arm64': 'mihomo-linux-arm64'
 }
 
-// Fetch the latest release version from the version.txt file
-async function getLatestReleaseVersion() {
-  try {
-    const response = await fetch(MIHOMO_VERSION_URL, {
-      method: 'GET'
-    })
-    let v = await response.text()
-    MIHOMO_VERSION = v.trim() // Trim to remove extra whitespaces
-    console.log(`Latest release version: ${MIHOMO_VERSION}`)
-  } catch (error) {
-    console.error('Error fetching latest release version:', error.message)
-    process.exit(1)
+async function resolveLatestReleaseAsset() {
+  const release = await fetchJson(MIHOMO_RELEASE_API_URL)
+  const assetPrefix = MIHOMO_MAP[`${platform}-${arch}`]
+  const assetExt = platform === 'win32' ? '.zip' : '.gz'
+  const assets = Array.isArray(release.assets) ? release.assets : []
+  const candidates = findReleaseAssets(assets, assetPrefix, assetExt)
+  const asset = choosePreferredAsset(candidates)
+
+  if (!asset) {
+    throw new Error(
+      `mihomo release ${release.tag_name ?? '<unknown>'} has no ${platform}-${arch} ${assetExt} asset matching ${assetPrefix}`
+    )
   }
+
+  MIHOMO_VERSION = requireString(release.tag_name, 'latest mihomo release tag')
+  MIHOMO_ASSET = asset
+  console.log(`Latest release asset: ${asset.name} (${MIHOMO_VERSION})`)
 }
 
 /*
@@ -96,54 +105,49 @@ if (!MIHOMO_ALPHA_MAP[`${platform}-${arch}`]) {
  * core info
  */
 function MihomoAlpha() {
-  const name = MIHOMO_ALPHA_MAP[`${platform}-${arch}`]
   const isWin = platform === 'win32'
-  const urlExt = isWin ? 'zip' : 'gz'
-  const downloadURL = `${MIHOMO_ALPHA_URL_PREFIX}/${name}-${MIHOMO_ALPHA_VERSION}.${urlExt}`
-  const exeFile = `${name}${isWin ? '.exe' : ''}`
-  const zipFile = `${name}-${MIHOMO_ALPHA_VERSION}.${urlExt}`
+  if (!MIHOMO_ALPHA_ASSET) return undefined
+  const zipFile = MIHOMO_ALPHA_ASSET.name
+  const exeFile = zipFile.replace(/\.(zip|gz)$/i, isWin ? '.exe' : '')
 
   return {
     name: 'mihomo-alpha',
     targetFile: `mihomo-alpha${isWin ? '.exe' : ''}`,
     exeFile,
     zipFile,
-    downloadURL
+    downloadURL: MIHOMO_ALPHA_ASSET.browser_download_url
   }
 }
 
 function mihomo() {
-  const name = MIHOMO_MAP[`${platform}-${arch}`]
   const isWin = platform === 'win32'
-  const urlExt = isWin ? 'zip' : 'gz'
-  const downloadURL = `${MIHOMO_URL_PREFIX}/${MIHOMO_VERSION}/${name}-${MIHOMO_VERSION}.${urlExt}`
-  const exeFile = `${name}${isWin ? '.exe' : ''}`
-  const zipFile = `${name}-${MIHOMO_VERSION}.${urlExt}`
+  if (!MIHOMO_ASSET) throw new Error('mihomo release asset was not resolved')
+  const zipFile = MIHOMO_ASSET.name
+  const exeFile = zipFile.replace(/\.(zip|gz)$/i, isWin ? '.exe' : '')
 
   return {
     name: 'mihomo',
     targetFile: `mihomo${isWin ? '.exe' : ''}`,
     exeFile,
     zipFile,
-    downloadURL
+    downloadURL: MIHOMO_ASSET.browser_download_url
   }
 }
 /**
  * download sidecar and rename
  */
 async function resolveSidecar(binInfo) {
+  if (!binInfo) return
   const { name, targetFile, zipFile, exeFile, downloadURL } = binInfo
 
   const sidecarDir = path.join(cwd, 'extra', 'sidecar')
   const sidecarPath = path.join(sidecarDir, targetFile)
+  const isWin = platform === 'win32'
 
   fs.mkdirSync(sidecarDir, { recursive: true })
-  if (fs.existsSync(sidecarPath)) {
-    fs.rmSync(sidecarPath)
-  }
   const tempDir = path.join(TEMP_DIR, name)
   const tempZip = path.join(tempDir, zipFile)
-  const tempExe = path.join(tempDir, exeFile)
+  const tempSidecar = path.join(tempDir, targetFile)
 
   fs.mkdirSync(tempDir, { recursive: true })
   try {
@@ -153,11 +157,11 @@ async function resolveSidecar(binInfo) {
 
     if (zipFile.endsWith('.zip')) {
       const zip = new AdmZip(tempZip)
-      zip.getEntries().forEach((entry) => {
-        console.log(`[DEBUG]: "${name}" entry name`, entry.entryName)
-      })
-      zip.extractAllTo(tempDir, true)
-      fs.renameSync(tempExe, sidecarPath)
+      const entry = resolveZipExecutableEntry(zip, exeFile, isWin)
+      console.log(`[DEBUG]: "${name}" executable entry`, entry.entryName)
+      zip.extractEntryTo(entry, tempDir, false, true)
+      fs.renameSync(path.join(tempDir, path.basename(entry.entryName)), tempSidecar)
+      finalizeSidecar(tempSidecar, sidecarPath, name)
       console.log(`[INFO]: "${name}" unzip finished`)
     } else if (zipFile.endsWith('.tgz')) {
       // tgz
@@ -171,17 +175,16 @@ async function resolveSidecar(binInfo) {
       const extractedFile = files.find((file) => file.startsWith('虚空终端-'))
       if (extractedFile) {
         const extractedFilePath = path.join(tempDir, extractedFile)
-        fs.renameSync(extractedFilePath, sidecarPath)
+        fs.renameSync(extractedFilePath, tempSidecar)
+        finalizeSidecar(tempSidecar, sidecarPath, name)
         console.log(`[INFO]: "${name}" file renamed to "${sidecarPath}"`)
-        execSync(`chmod 755 ${sidecarPath}`)
-        console.log(`[INFO]: "${name}" chmod binary finished`)
       } else {
         throw new Error(`Expected file not found in ${tempDir}`)
       }
     } else {
       // gz
       const readStream = fs.createReadStream(tempZip)
-      const writeStream = fs.createWriteStream(sidecarPath)
+      const writeStream = fs.createWriteStream(tempSidecar)
       await new Promise((resolve, reject) => {
         const onError = (error) => {
           console.error(`[ERROR]: "${name}" gz failed:`, error.message)
@@ -192,19 +195,17 @@ async function resolveSidecar(binInfo) {
           .pipe(writeStream)
           .on('finish', () => {
             console.log(`[INFO]: "${name}" gunzip finished`)
-            execSync(`chmod 755 ${sidecarPath}`)
-            console.log(`[INFO]: "${name}" chmod binary finished`)
             resolve()
           })
           .on('error', onError)
       })
+      finalizeSidecar(tempSidecar, sidecarPath, name)
     }
   } catch (err) {
-    // 需要删除文件
-    fs.rmSync(sidecarPath)
+    if (fs.existsSync(tempSidecar)) fs.rmSync(tempSidecar)
     throw err
   } finally {
-    fs.rmSync(tempDir, { recursive: true })
+    fs.rmSync(tempDir, { recursive: true, force: true })
   }
 }
 
@@ -216,10 +217,6 @@ async function resolveResource(binInfo) {
 
   const resDir = path.join(cwd, 'extra', 'files')
   const targetPath = path.join(resDir, file)
-
-  if (fs.existsSync(targetPath)) {
-    fs.rmSync(targetPath)
-  }
 
   fs.mkdirSync(resDir, { recursive: true })
   await downloadFile(downloadURL, targetPath)
@@ -235,15 +232,121 @@ async function resolveResource(binInfo) {
 /**
  * download file and save to `path`
  */
-async function downloadFile(url, path) {
+async function downloadFile(url, targetPath) {
   const response = await fetch(url, {
     method: 'GET',
     headers: { 'Content-Type': 'application/octet-stream' }
   })
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(
+      `download failed ${response.status} ${response.statusText} for ${url}${
+        body ? `: ${body.slice(0, 200)}` : ''
+      }`
+    )
+  }
   const buffer = await response.arrayBuffer()
-  fs.writeFileSync(path, new Uint8Array(buffer))
+  if (buffer.byteLength === 0) {
+    throw new Error(`downloaded empty file from ${url}`)
+  }
+  const tempPath = `${targetPath}.download-${process.pid}-${Date.now()}`
+  try {
+    fs.writeFileSync(tempPath, new Uint8Array(buffer))
+    replaceFile(tempPath, targetPath)
+  } catch (error) {
+    if (fs.existsSync(tempPath)) fs.rmSync(tempPath)
+    throw error
+  }
 
   console.log(`[INFO]: download finished "${url}"`)
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'koala-clash-prepare'
+    }
+  })
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(
+      `GET ${url} failed ${response.status} ${response.statusText}${body ? `: ${body}` : ''}`
+    )
+  }
+  return response.json()
+}
+
+function choosePreferredAsset(candidates) {
+  return candidates.find((asset) => !asset.name.includes('-go')) ?? candidates[0]
+}
+
+function findReleaseAssets(assets, assetPrefix, assetExt) {
+  return assets.filter(
+    (asset) =>
+      typeof asset.name === 'string' &&
+      typeof asset.browser_download_url === 'string' &&
+      asset.browser_download_url.startsWith('https://') &&
+      asset.name.startsWith(`${assetPrefix}-`) &&
+      asset.name.endsWith(assetExt)
+  )
+}
+
+function resolveZipExecutableEntry(zip, expectedExeFile, isWin) {
+  const expectedExt = isWin ? '.exe' : ''
+  const entries = zip.getEntries().filter((entry) => !entry.isDirectory)
+  const entry =
+    entries.find((entry) => path.basename(entry.entryName) === expectedExeFile) ??
+    entries.find((entry) => {
+      const basename = path.basename(entry.entryName)
+      return basename.startsWith('mihomo-') && basename.endsWith(expectedExt)
+    })
+
+  if (!entry) {
+    throw new Error(
+      `Expected mihomo executable not found in ${entries.map((item) => item.entryName).join(', ')}`
+    )
+  }
+  return entry
+}
+
+function finalizeSidecar(tempSidecar, sidecarPath, name) {
+  validateLocalFile(tempSidecar, name)
+  if (platform !== 'win32') {
+    execSync(`chmod 755 "${tempSidecar}"`)
+    console.log(`[INFO]: "${name}" chmod binary finished`)
+  }
+  replaceFile(tempSidecar, sidecarPath)
+}
+
+function replaceFile(sourcePath, targetPath) {
+  if (fs.existsSync(targetPath)) {
+    fs.rmSync(targetPath)
+  }
+  fs.renameSync(sourcePath, targetPath)
+}
+
+function validateLocalFile(filePath, name) {
+  const stat = fs.statSync(filePath)
+  if (!stat.isFile() || stat.size === 0) {
+    throw new Error(`"${name}" resolved to an empty or invalid file`)
+  }
+}
+
+function requireString(value, label) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`Missing ${label}`)
+  }
+  return value.trim()
+}
+
+function removeSidecarTarget(targetFile) {
+  const sidecarPath = path.join(cwd, 'extra', 'sidecar', targetFile)
+  if (fs.existsSync(sidecarPath)) {
+    fs.rmSync(sidecarPath)
+    console.log(`[INFO]: removed unavailable sidecar "${targetFile}"`)
+  }
 }
 
 const resolveMmdb = () =>
@@ -329,12 +432,12 @@ const resolveFont = async () => {
 const tasks = [
   {
     name: 'mihomo-alpha',
-    func: () => getLatestAlphaVersion().then(() => resolveSidecar(MihomoAlpha())),
+    func: () => resolveLatestAlphaAsset().then(() => resolveSidecar(MihomoAlpha())),
     retry: 5
   },
   {
     name: 'mihomo',
-    func: () => getLatestReleaseVersion().then(() => resolveSidecar(mihomo())),
+    func: () => resolveLatestReleaseAsset().then(() => resolveSidecar(mihomo())),
     retry: 5
   },
   { name: 'mmdb', func: resolveMmdb, retry: 5 },
@@ -391,5 +494,4 @@ async function runTask() {
   return runTask()
 }
 
-runTask()
-runTask()
+await Promise.all([runTask(), runTask()])

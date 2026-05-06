@@ -1,6 +1,3 @@
-import { parseVlessUri } from '../../../shared/lib/vless/parser'
-import { VlessUriParseResult } from '../../../shared/lib/vless/types'
-
 export type ProfileImportInputKind = 'remote_url' | 'amnezia_key' | 'vless_uri' | 'invalid'
 
 export type ProfileImportInvalidReason = 'empty' | 'unsupported_format'
@@ -9,7 +6,6 @@ export interface ProfileImportInputClassification {
   kind: ProfileImportInputKind
   value: string
   reason?: ProfileImportInvalidReason
-  vless?: VlessUriParseResult
 }
 
 export interface ProfileImportSubmitHandlers {
@@ -18,10 +14,6 @@ export interface ProfileImportSubmitHandlers {
   importAmneziaKey?: (raw: string) => Promise<void>
 }
 
-/**
- * Проверяет, является ли строка поддерживаемым URL для профиля.
- * Поддерживаются http(s) протоколы с корректным hostname.
- */
 export function isSupportedRemoteProfileUrl(input: string): boolean {
   const value = input.trim()
   if (!/^https?:\/\//i.test(value)) return false
@@ -34,13 +26,6 @@ export function isSupportedRemoteProfileUrl(input: string): boolean {
   }
 }
 
-/**
- * Классифицирует введённую строку:
- * - "vpn://" → ключ Amnezia;
- * - "vless://" → VLESS‑URI;
- * - http/https → удалённая подписка;
- * - пустая строка или иное → invalid.
- */
 export function classifyProfileImportInput(input: string): ProfileImportInputClassification {
   const value = input.trim()
 
@@ -50,21 +35,14 @@ export function classifyProfileImportInput(input: string): ProfileImportInputCla
 
   const lowerValue = value.toLowerCase()
 
-  // Amnezia‑ключ
   if (lowerValue.startsWith('vpn://')) {
     return { kind: 'amnezia_key', value }
   }
 
-  // VLESS‑URI
   if (lowerValue.startsWith('vless://')) {
-    return {
-      kind: 'vless_uri',
-      value,
-      vless: parseVlessUri(value)
-    }
+    return { kind: 'vless_uri', value }
   }
 
-  // HTTP/HTTPS подписка
   if (isSupportedRemoteProfileUrl(value)) {
     return { kind: 'remote_url', value }
   }
@@ -72,11 +50,6 @@ export function classifyProfileImportInput(input: string): ProfileImportInputCla
   return { kind: 'invalid', value, reason: 'unsupported_format' }
 }
 
-/**
- * Обработчик импорта профиля. В зависимости от классификации вызывает
- * соответствующий callback (importRemoteUrl, importVlessUri, importAmneziaKey).
- * Генерирует ошибку, если ввод неподдерживаем.
- */
 export async function submitProfileImportInput(
   input: string,
   handlers: ProfileImportSubmitHandlers
@@ -89,10 +62,6 @@ export async function submitProfileImportInput(
   }
 
   if (classification.kind === 'vless_uri') {
-    // проверяем валидность VLESS‑URI
-    if (classification.vless?.ok === false) {
-      throw new Error(classification.vless.errors[0]?.message || 'Unsupported VLESS URI')
-    }
     await handlers.importVlessUri(classification.value)
     return classification
   }
@@ -102,5 +71,5 @@ export async function submitProfileImportInput(
     return classification
   }
 
-  throw new Error('Unsupported profile import input')
+  throw new Error('Unsupported profile import input. Use http(s)://, vless://, or vpn://.')
 }

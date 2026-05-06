@@ -38,7 +38,8 @@ import {
   startService,
   stopService,
   initService,
-  restartService
+  restartService,
+  getBuiltinCoreAvailability
 } from '@renderer/utils/ipc'
 import React, { useState, useEffect } from 'react'
 import ControllerSetting from '@renderer/components/mihomo/controller-setting'
@@ -85,6 +86,11 @@ const Mihomo: React.FC = () => {
   const [pendingPermissionMode, setPendingPermissionMode] = useState<string>('')
   const [systemCorePaths, setSystemCorePaths] = useState<string[]>(systemCorePathsCache || [])
   const [loadingPaths, setLoadingPaths] = useState(systemCorePathsCache === null)
+  const [builtinCoreAvailability, setBuiltinCoreAvailability] = useState<{
+    mihomo: boolean
+    'mihomo-alpha': boolean
+  } | null>(null)
+  const previewCoreAvailable = builtinCoreAvailability?.['mihomo-alpha'] === true
 
   useEffect(() => {
     if (systemCorePathsCache !== null) return
@@ -94,6 +100,19 @@ const Mihomo: React.FC = () => {
       .catch(() => {})
       .finally(() => setLoadingPaths(false))
   }, [])
+
+  useEffect(() => {
+    getBuiltinCoreAvailability().then(setBuiltinCoreAvailability).catch(() => {
+      setBuiltinCoreAvailability({ mihomo: true, 'mihomo-alpha': false })
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!builtinCoreAvailability) return
+    if (core === 'mihomo-alpha' && !builtinCoreAvailability['mihomo-alpha']) {
+      patchAppConfig({ core: 'mihomo' }).catch((error) => toast.error(`${error}`))
+    }
+  }, [builtinCoreAvailability, core, patchAppConfig])
 
   const onChangeNeedRestart = async (patch: Partial<MihomoConfig>): Promise<void> => {
     await patchControledMihomoConfig(patch)
@@ -126,6 +145,11 @@ const Mihomo: React.FC = () => {
   }
 
   const handleCoreChange = async (newCore: 'mihomo' | 'mihomo-alpha' | 'system'): Promise<void> => {
+    if (newCore === 'mihomo-alpha' && !previewCoreAvailable) {
+      toast.error(t('pages.mihomo.previewCoreUnavailable'))
+      return
+    }
+
     if (newCore === 'system') {
       const paths = await getSystemCorePaths()
 
@@ -300,7 +324,7 @@ const Mihomo: React.FC = () => {
         <SettingItem
           title={t('pages.mihomo.coreVersion')}
           actions={
-            core === 'mihomo' || core === 'mihomo-alpha' ? (
+            core === 'mihomo' || (core === 'mihomo-alpha' && previewCoreAvailable) ? (
               <Button
                 size="icon-sm"
                 title={t('pages.mihomo.upgradeCore')}
@@ -320,7 +344,7 @@ const Mihomo: React.FC = () => {
           divider
         >
           <Select
-            value={core}
+            value={core === 'mihomo-alpha' && !previewCoreAvailable ? 'mihomo' : core}
             onValueChange={(value) =>
               handleCoreChange(value as 'mihomo' | 'mihomo-alpha' | 'system')
             }
@@ -330,7 +354,9 @@ const Mihomo: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="mihomo">{t('pages.mihomo.builtinStable')}</SelectItem>
-              <SelectItem value="mihomo-alpha">{t('pages.mihomo.builtinPreview')}</SelectItem>
+              {previewCoreAvailable && (
+                <SelectItem value="mihomo-alpha">{t('pages.mihomo.builtinPreview')}</SelectItem>
+              )}
               <SelectItem value="system">{t('pages.mihomo.useSystemCore')}</SelectItem>
             </SelectContent>
           </Select>

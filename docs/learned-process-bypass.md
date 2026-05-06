@@ -9,7 +9,7 @@ It does not change Mihomo `DIRECT` semantics and it is not native process exclus
 - `PROCESS-NAME,<name>,DIRECT` can become `learned_bypass` after the process has produced a visible direct connection.
 - Learned IPs are injected as transient TUN route exclusions.
 - Entries expire automatically after a conservative TTL.
-- Existing helper upstream bypass and address-based DIRECT exclude remain independent and are merged deterministically.
+- Existing address-based DIRECT excludes remain independent and are merged deterministically.
 
 ## What It Cannot Do
 

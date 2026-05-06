@@ -84,7 +84,7 @@ describe('profile import submit routing', () => {
             calls.push(`amnezia:${raw}`)
           }
         }),
-      /Unsupported profile import input/
+      /Unsupported profile import input\. Use http\(s\):\/\/, vless:\/\/, or vpn:\/\/\./
     )
     assert.deepEqual(calls, [])
   })

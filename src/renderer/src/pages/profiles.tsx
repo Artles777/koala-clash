@@ -174,7 +174,7 @@ const Profiles: React.FC = () => {
     if (!ruBundlePromptProfile) return
 
     try {
-      const added = await appendRuBundleToProfile(ruBundlePromptProfile.id, 'DIRECT')
+      const added = await appendRuBundleToProfile(ruBundlePromptProfile.id)
       if (ruBundlePromptProfile.id === current) {
         await mihomoHotReloadConfig()
       }

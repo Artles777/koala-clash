@@ -5,11 +5,16 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@renderer/components/ui/button'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
-import { checkCorePermission, checkElevateTask } from '@renderer/utils/ipc'
+import { checkCorePermission, checkElevateTask, getBuiltinCoreAvailability } from '@renderer/utils/ipc'
 import { platform } from '@renderer/utils/init'
 import CoreSetupModalHost, { CoreSetupTarget } from './core-setup-modal-host'
 
-type CoreReadinessStatus = 'ready' | 'needs_permission' | 'unknown' | 'system_core'
+type CoreReadinessStatus =
+  | 'ready'
+  | 'needs_permission'
+  | 'unknown'
+  | 'system_core'
+  | 'missing_builtin_core'
 
 interface CoreReadiness {
   status: CoreReadinessStatus
@@ -31,6 +36,11 @@ const CoreReadinessShortcut: React.FC = () => {
     async (): Promise<CoreReadiness> => {
       if (core === 'system') {
         return { status: 'system_core', needsAction: false }
+      }
+
+      const availability = await getBuiltinCoreAvailability()
+      if (!availability[core]) {
+        return { status: 'missing_builtin_core', needsAction: true }
       }
 
       if (platform === 'win32') {
@@ -134,6 +144,8 @@ function getStatusText(t: (key: string) => string, status: CoreReadinessStatus):
       return t('pages.home.coreSetupStatusNeedsPermission')
     case 'system_core':
       return t('pages.home.coreSetupStatusSystem')
+    case 'missing_builtin_core':
+      return t('pages.home.coreSetupStatusMissingBuiltin')
     case 'unknown':
     default:
       return t('pages.home.coreSetupStatusUnknown')
@@ -148,6 +160,8 @@ function getDescription(t: (key: string) => string, status: CoreReadinessStatus)
       return t('pages.home.coreSetupDescriptionNeedsPermission')
     case 'system_core':
       return t('pages.home.coreSetupDescriptionSystem')
+    case 'missing_builtin_core':
+      return t('pages.home.coreSetupDescriptionMissingBuiltin')
     case 'unknown':
     default:
       return t('pages.home.coreSetupDescriptionUnknown')

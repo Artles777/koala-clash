@@ -16,6 +16,7 @@ import { Spinner } from '@renderer/components/ui/spinner'
 import {
   checkCorePermission,
   checkElevateTask,
+  getBuiltinCoreAvailability,
   manualGrantCorePermition,
   revokeCorePermission
 } from '@renderer/utils/ipc'
@@ -34,10 +35,18 @@ const PermissionModal: React.FC<Props> = (props) => {
   const [hasPermission, setHasPermission] = useState<
     { mihomo: boolean; 'mihomo-alpha': boolean } | boolean | null
   >(null)
+  const [builtinCoreAvailability, setBuiltinCoreAvailability] = useState<{
+    mihomo: boolean
+    'mihomo-alpha': boolean
+  }>({ mihomo: true, 'mihomo-alpha': false })
   const isWindows = platform === 'win32'
+  const previewCoreAvailable = builtinCoreAvailability['mihomo-alpha']
 
   const checkPermissions = async (): Promise<void> => {
     try {
+      if (!isWindows) {
+        setBuiltinCoreAvailability(await getBuiltinCoreAvailability())
+      }
       const result = isWindows ? await checkElevateTask() : await checkCorePermission()
       setHasPermission(result)
     } catch {
@@ -227,44 +236,46 @@ const PermissionModal: React.FC<Props> = (props) => {
                     </CardContent>
                   </Card>
 
-                  <Card className="border-none py-0 gap-0">
-                    <CardHeader className="px-4 pt-4 pb-0">
-                      <div className="flex items-center justify-between w-full">
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-semibold text-base">
-                            {t('pages.mihomo.builtinPreview')}
-                          </h4>
+                  {previewCoreAvailable && (
+                    <Card className="border-none py-0 gap-0">
+                      <CardHeader className="px-4 pt-4 pb-0">
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-semibold text-base">
+                              {t('pages.mihomo.builtinPreview')}
+                            </h4>
+                          </div>
+                          <Badge className={`text-xs ${getStatusBadgeClass('mihomo-alpha')}`}>
+                            {getStatusText('mihomo-alpha')}
+                          </Badge>
                         </div>
-                        <Badge className={`text-xs ${getStatusBadgeClass('mihomo-alpha')}`}>
-                          {getStatusText('mihomo-alpha')}
-                        </Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="px-4 pt-3 pb-4">
-                      {typeof hasPermission !== 'boolean' && hasPermission?.['mihomo-alpha'] ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full border-warning text-warning hover:bg-warning/10"
-                          onClick={() => handleCoreAction('mihomo-alpha', false)}
-                          disabled={loading['mihomo-alpha']}
-                        >
-                          {loading['mihomo-alpha'] && <Spinner className="mr-2 size-4" />}
-                          {t('mihomo.permissionModal.revokeAuthorization')}
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          className="w-full shadow-sm"
-                          onClick={() => handleCoreAction('mihomo-alpha', true)}
-                          disabled={loading['mihomo-alpha']}
-                        >
-                          {loading['mihomo-alpha'] && <Spinner className="mr-2 size-4" />}
-                          {t('mihomo.permissionModal.authorizeCore')}
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
+                      </CardHeader>
+                      <CardContent className="px-4 pt-3 pb-4">
+                        {typeof hasPermission !== 'boolean' && hasPermission?.['mihomo-alpha'] ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full border-warning text-warning hover:bg-warning/10"
+                            onClick={() => handleCoreAction('mihomo-alpha', false)}
+                            disabled={loading['mihomo-alpha']}
+                          >
+                            {loading['mihomo-alpha'] && <Spinner className="mr-2 size-4" />}
+                            {t('mihomo.permissionModal.revokeAuthorization')}
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            className="w-full shadow-sm"
+                            onClick={() => handleCoreAction('mihomo-alpha', true)}
+                            disabled={loading['mihomo-alpha']}
+                          >
+                            {loading['mihomo-alpha'] && <Spinner className="mr-2 size-4" />}
+                            {t('mihomo.permissionModal.authorizeCore')}
+                          </Button>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
 
                 <div className="text-xs text-muted-foreground space-y-2">

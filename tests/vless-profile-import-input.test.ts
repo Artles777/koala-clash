@@ -40,27 +40,18 @@ describe('profile import input classification', () => {
     assert.equal(result.reason, undefined)
   })
 
-  it('routes valid vless:// input as vless_uri with a parsed draft', () => {
+  it('routes vless:// input as vless_uri without parsing inside the generic classifier', () => {
     const result = classifyProfileImportInput(`vless://${uuid}@example.com:443?security=tls`)
 
     assert.equal(result.kind, 'vless_uri')
-    assert.equal(result.vless?.ok, true)
-    if (result.vless?.ok !== true) return
-    assert.equal(result.vless.draft.uuid, uuid)
-    assert.equal(result.vless.draft.server.host, 'example.com')
-    assert.equal(result.vless.draft.security, 'tls')
+    assert.equal(result.value, `vless://${uuid}@example.com:443?security=tls`)
   })
 
-  it('routes invalid vless:// input as vless_uri with structured parser errors', () => {
+  it('keeps invalid-looking vless:// input on the VLESS import path for main-process validation', () => {
     const result = classifyProfileImportInput('vless://not-a-uuid@example.com:443?type=splithttp')
 
     assert.equal(result.kind, 'vless_uri')
-    assert.equal(result.vless?.ok, false)
-    if (result.vless?.ok !== false) return
-    assert.deepEqual(
-      result.vless.errors.map((error) => error.code),
-      ['invalid_uuid', 'unsupported_transport']
-    )
+    assert.equal(result.reason, undefined)
   })
 
   it('keeps unsupported non-vless input invalid', () => {
@@ -108,22 +99,21 @@ describe('profile import input submit routing', () => {
     assert.deepEqual(calls, [`vless:${uri}`])
   })
 
-  it('surfaces unsupported vless_uri variants before handler execution', async () => {
+  it('routes unsupported-looking vless_uri variants to the VLESS handler', async () => {
     const calls: string[] = []
+    const uri = `vless://${uuid}@example.com:443?type=splithttp`
 
-    await assert.rejects(
-      () =>
-        submitProfileImportInput(`vless://${uuid}@example.com:443?type=splithttp`, {
-          importRemoteUrl: async (url) => {
-            calls.push(`remote:${url}`)
-          },
-          importVlessUri: async (raw) => {
-            calls.push(`vless:${raw}`)
-          }
-        }),
-      /intentionally unsupported|Unsupported VLESS transport/
-    )
-    assert.deepEqual(calls, [])
+    const result = await submitProfileImportInput(uri, {
+      importRemoteUrl: async (url) => {
+        calls.push(`remote:${url}`)
+      },
+      importVlessUri: async (raw) => {
+        calls.push(`vless:${raw}`)
+      }
+    })
+
+    assert.equal(result.kind, 'vless_uri')
+    assert.deepEqual(calls, [`vless:${uri}`])
   })
 
   it('keeps vpn:// classification available without requiring a VLESS handler path', async () => {

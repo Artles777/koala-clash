@@ -122,22 +122,6 @@ export function profileConfigPath(): string {
   return path.join(dataDir(), 'profile.yaml')
 }
 
-export function importedSourcesPath(): string {
-  return path.join(dataDir(), 'imported-sources.yaml')
-}
-
-export function normalizedProfilesPath(): string {
-  return path.join(dataDir(), 'normalized-profiles.yaml')
-}
-
-export function amneziaHelperRulesPath(): string {
-  return path.join(dataDir(), 'amnezia-helper-rules.yaml')
-}
-
-export function realtimePresetValidationPath(): string {
-  return path.join(dataDir(), 'realtime-preset-validation.json')
-}
-
 export function profilesDir(): string {
   return path.join(dataDir(), 'profiles')
 }

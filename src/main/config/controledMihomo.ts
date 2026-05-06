@@ -68,15 +68,4 @@ export async function patchControledMihomoConfig(patch: Partial<MihomoConfig>): 
   } catch {
     // running core may not be ready; changes will apply on next restart/reload
   }
-  await syncAmneziaHelperForRuntimeMode()
-}
-
-async function syncAmneziaHelperForRuntimeMode(): Promise<void> {
-  try {
-    const { syncCurrentAmneziaHelperWithRuntimeMode } =
-      await import('../runtime/amnezia-helper-manager')
-    await syncCurrentAmneziaHelperWithRuntimeMode()
-  } catch (error) {
-    console.warn('[amnezia-helper] failed to sync helper with TUN state', error)
-  }
 }

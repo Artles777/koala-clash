@@ -3,7 +3,7 @@ import {
   normalizeEndpointHost,
   normalizeIpList,
   normalizeRouteExcludeAddresses
-} from './amnezia-helper-tun-bypass'
+} from './route-exclude-utils'
 import { DirectTunBypassConfig, parseDirectRules } from './direct-tun-bypass'
 
 export type LearnedProcessBypassConfidence = 'runtime_connection'

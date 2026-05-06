@@ -7,36 +7,16 @@ interface RuleItemProps {
   type: string
   payload: string
   proxy: string
-  bypassLabel?: string
-  bypassHint?: string
-  bypassTone?: 'info' | 'warning' | 'danger' | 'neutral'
-  bypassVariant?: 'default' | 'secondary' | 'destructive' | 'outline'
   size?: number
   enabled?: boolean
   disabledLabel?: string
   note?: string
-  sourceLabel?: string
   scopeLabel?: string
   actions?: React.ReactNode
 }
 
 const RuleItem: React.FC<RuleItemProps> = (props) => {
-  const {
-    type,
-    payload,
-    proxy,
-    bypassLabel,
-    bypassHint,
-    bypassTone,
-    bypassVariant,
-    index,
-    enabled,
-    disabledLabel,
-    note,
-    sourceLabel,
-    scopeLabel,
-    actions
-  } = props
+  const { type, payload, proxy, index, enabled, disabledLabel, note, scopeLabel, actions } = props
   return (
     <div className={`px-2 pb-2 ${index === 0 ? 'pt-2' : ''}`}>
       <Card className="gap-0 py-0">
@@ -52,11 +32,6 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
                 </div>
               )}
               <div className="flex flex-wrap gap-1.5">
-                {sourceLabel && (
-                  <Badge variant="secondary" className="rounded-sm">
-                    {sourceLabel}
-                  </Badge>
-                )}
                 {scopeLabel && (
                   <Badge variant="secondary" className="rounded-sm">
                     {scopeLabel}
@@ -71,15 +46,6 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
                 >
                   {proxy}
                 </Badge>
-                {bypassLabel && (
-                  <Badge
-                    variant={bypassVariant ?? 'outline'}
-                    className="rounded-sm"
-                    title={bypassHint}
-                  >
-                    {bypassLabel}
-                  </Badge>
-                )}
                 {enabled === false && (
                   <Badge variant="secondary" className="rounded-sm">
                     {disabledLabel ?? 'Disabled'}
@@ -89,14 +55,6 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
               {note && (
                 <div className="mt-1 text-xs text-muted-foreground truncate" title={note}>
                   {note}
-                </div>
-              )}
-              {bypassHint && (bypassTone === 'warning' || bypassTone === 'danger') && (
-                <div
-                  className={`mt-1 text-xs truncate ${getBypassHintClassName(bypassTone)}`}
-                  title={bypassHint}
-                >
-                  {bypassHint}
                 </div>
               )}
             </div>
@@ -113,12 +71,6 @@ const RuleItem: React.FC<RuleItemProps> = (props) => {
       </Card>
     </div>
   )
-}
-
-function getBypassHintClassName(tone: RuleItemProps['bypassTone']): string {
-  if (tone === 'danger') return 'text-destructive'
-  if (tone === 'warning') return 'text-warning'
-  return 'text-muted-foreground'
 }
 
 export default RuleItem

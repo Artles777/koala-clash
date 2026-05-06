@@ -12,7 +12,7 @@ import {
   resourcesFilesDir,
   taskDir
 } from '../utils/dirs'
-import { copyFileSync, writeFileSync } from 'fs'
+import { copyFileSync, existsSync, writeFileSync } from 'fs'
 import { t } from '../utils/i18n'
 
 export function getFilePath(ext: string[]): string[] | undefined {
@@ -50,7 +50,11 @@ export async function setupFirewall(): Promise<void> {
   `
   const createCommand = `
   New-NetFirewallRule -DisplayName "mihomo" -Direction Inbound -Action Allow -Program "${mihomoCorePath('mihomo')}" -Enabled True -Profile Any -ErrorAction SilentlyContinue
-  New-NetFirewallRule -DisplayName "mihomo-alpha" -Direction Inbound -Action Allow -Program "${mihomoCorePath('mihomo-alpha')}" -Enabled True -Profile Any -ErrorAction SilentlyContinue
+  ${
+    existsSync(mihomoCorePath('mihomo-alpha'))
+      ? `New-NetFirewallRule -DisplayName "mihomo-alpha" -Direction Inbound -Action Allow -Program "${mihomoCorePath('mihomo-alpha')}" -Enabled True -Profile Any -ErrorAction SilentlyContinue`
+      : ''
+  }
   New-NetFirewallRule -DisplayName "${appName}" -Direction Inbound -Action Allow -Program "${exePath()}" -Enabled True -Profile Any -ErrorAction SilentlyContinue
   `
 

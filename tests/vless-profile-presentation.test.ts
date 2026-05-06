@@ -4,61 +4,23 @@ import {
   formatVlessImportErrorMessage,
   formatVlessParseErrorMessage,
   formatVlessRuntimeErrorMessage,
-  getVlessDraftPresentation,
-  getVlessProfileDetails,
-  getVlessProfilePresentation,
-  getVlessTroubleshootingHints
+  getVlessProfilePresentation
 } from '../src/renderer/src/utils/vless-profile-presentation'
 import { parseVlessUri } from '../src/shared/lib/vless/parser'
 
-const uuid = '00000000-0000-4000-8000-000000000000'
-
 describe('VLESS profile presentation', () => {
-  it('maps VLESS profile metadata to a badge and compact summary', () => {
+  it('maps VLESS sourceType to a badge and profile-name summary', () => {
     const presentation = getVlessProfilePresentation({
-      sourceType: 'vless_uri',
-      source: {
-        vless: {
-          host: 'example.com',
-          port: 443,
-          transport: 'ws',
-          security: 'tls'
-        }
-      }
+      name: 'Imported VLESS',
+      sourceType: 'vless_uri'
     })
 
     assert.equal(presentation?.badge, 'VLESS')
-    assert.equal(presentation?.summary, 'example.com:443 · ws/tls')
+    assert.equal(presentation?.summary, 'Imported VLESS')
   })
 
   it('does not label normal local profiles as VLESS', () => {
-    assert.equal(getVlessProfilePresentation({ sourceType: undefined, source: undefined }), null)
-  })
-
-  it('does not label profiles with malformed VLESS metadata', () => {
-    assert.equal(
-      getVlessProfilePresentation({
-        sourceType: 'vless_uri',
-        source: {
-          vless: {
-            host: '',
-            port: 0,
-            transport: 'ws',
-            security: 'tls'
-          }
-        }
-      }),
-      null
-    )
-  })
-
-  it('uses the display-name fallback generated from host and port when fragment is missing', () => {
-    const parsed = parseVlessUri(`vless://${uuid}@example.com:8443?security=reality&pbk=abc&sni=site.test`)
-    assert.equal(parsed.ok, true)
-    if (!parsed.ok) return
-
-    const presentation = getVlessDraftPresentation(parsed.draft)
-    assert.equal(presentation.summary, 'example.com:8443 · tcp/reality')
+    assert.equal(getVlessProfilePresentation({ name: 'Local', sourceType: undefined }), null)
   })
 
   it('maps parser errors to user-friendly messages', () => {
@@ -82,76 +44,18 @@ describe('VLESS profile presentation', () => {
     )
   })
 
-  it('maps VLESS metadata to safe details without UUID or raw-link leakage', () => {
-    const details = getVlessProfileDetails({
-      sourceType: 'vless_uri',
-      source: {
-        vless: {
-          host: 'edge.example',
-          port: 443,
-          transport: 'xhttp',
-          security: 'reality',
-          serverName: 'sni.example',
-          flow: 'xtls-rprx-vision',
-          packetEncoding: 'xudp'
-        }
-      }
-    })
-
-    assert.deepEqual(details, [
-      { label: 'Source', value: 'Imported VLESS' },
-      { label: 'Server', value: 'edge.example:443' },
-      { label: 'Transport', value: 'xHTTP' },
-      { label: 'Security', value: 'REALITY' },
-      { label: 'SNI / server name', value: 'sni.example' },
-      { label: 'Flow', value: 'xtls-rprx-vision' },
-      { label: 'Packet encoding', value: 'xudp' }
-    ])
-
-    const serialized = JSON.stringify(details)
-    assert.equal(serialized.includes(uuid), false)
-    assert.equal(serialized.includes('vless://'), false)
-  })
-
-  it('provides troubleshooting hints for transport, reality, and packet encoding', () => {
-    const hints = getVlessTroubleshootingHints({
-      sourceType: 'vless_uri',
-      source: {
-        vless: {
-          host: 'edge.example',
-          port: 443,
-          transport: 'httpupgrade',
-          security: 'reality',
-          packetEncoding: 'packetaddr'
-        }
-      }
-    })
-
-    assert.equal(hints.some((hint) => hint.includes('REALITY')), true)
-    assert.equal(hints.some((hint) => hint.includes('HTTP Upgrade')), true)
-    assert.equal(hints.some((hint) => hint.includes('packet encoding')), true)
-  })
-
-  it('maps runtime failures to VLESS-specific troubleshooting messages', () => {
+  it('maps runtime failures to one VLESS-specific activation message', () => {
     const profile = {
-      sourceType: 'vless_uri' as const,
-      source: {
-        vless: {
-          host: 'edge.example',
-          port: 443,
-          transport: 'xhttp' as const,
-          security: 'tls' as const
-        }
-      }
+      sourceType: 'vless_uri' as const
     }
 
     assert.match(
       formatVlessRuntimeErrorMessage('TLS handshake failed: certificate is invalid', profile),
-      /VLESS TLS runtime failure/
+      /VLESS profile failed to activate/
     )
     assert.match(
       formatVlessRuntimeErrorMessage('xhttp stream-up download bad status: 404', profile),
-      /VLESS transport runtime failure/
+      /VLESS profile failed to activate/
     )
     assert.equal(
       formatVlessRuntimeErrorMessage('xhttp stream-up download bad status: 404'),

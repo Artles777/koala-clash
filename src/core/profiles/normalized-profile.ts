@@ -7,13 +7,7 @@ export interface ImportedSource {
   importedAt: number
 }
 
-export type NormalizedProfileProtocol =
-  | 'wireguard'
-  | 'amneziawg'
-  | 'openvpn'
-  | 'xray'
-  | 'shadowsocks'
-  | 'unknown'
+export type NormalizedProfileProtocol = 'wireguard' | 'amneziawg' | 'unknown'
 
 export interface NormalizedEndpoint {
   host: string
@@ -80,13 +74,7 @@ export interface NormalizedProfileValidationIssue {
   message: string
 }
 
-const supportedProtocols = new Set<NormalizedProfileProtocol>([
-  'wireguard',
-  'amneziawg',
-  'openvpn',
-  'xray',
-  'shadowsocks'
-])
+const supportedProtocols = new Set<NormalizedProfileProtocol>(['wireguard', 'amneziawg'])
 
 export function validateNormalizedProfile(
   profile: NormalizedProfile

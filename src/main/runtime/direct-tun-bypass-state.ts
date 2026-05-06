@@ -19,6 +19,10 @@ function cloneDirectTunBypassResolution(
   return {
     ...resolution,
     routeExcludeAddresses: [...resolution.routeExcludeAddresses],
+    resolvedRules: resolution.resolvedRules.map((rule) => ({
+      ...rule,
+      routeExcludeAddresses: [...rule.routeExcludeAddresses]
+    })),
     warnings: resolution.warnings.map((warning) => ({ ...warning })),
     unsupportedRules: resolution.unsupportedRules.map((rule) => ({ ...rule }))
   }

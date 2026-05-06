@@ -1,20 +1,14 @@
 # Glossary
 
-## Helper
-
-The external `amnezia-helper` process managed by Koala. It starts the
-Amnezia/WireGuard runtime and exposes a local proxy endpoint that Mihomo can use.
-
 ## TUN
 
 A virtual network interface mode where Mihomo captures system traffic. TUN can
 route traffic that does not use the system proxy, but it also makes bypass rules
 more platform-dependent.
 
-## PROXY / VPN / PROXY
+## PROXY
 
-Send matching traffic to the proxy path. For VPN-owned rules, Koala shows this
-as `VPN / PROXY` so users do not need to see internal helper target names.
+Send matching traffic to the selected Mihomo proxy path.
 
 ## DIRECT
 
@@ -36,12 +30,6 @@ runtime TUN exclusions. This is best-effort and expires with TTL.
 
 The platform does not currently have an active native process-bypass dataplane,
 so Koala relies on address-based excludes and learned bypass.
-
-## smoke_passed
-
-A preset smoke check passed runtime checks such as helper readiness, routing
-injection, UDP confidence, connectivity probe, and rule coverage. It is not a
-guarantee of real voice/video quality.
 
 ## validated
 

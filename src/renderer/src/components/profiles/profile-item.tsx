@@ -9,24 +9,16 @@ import {
 } from '@renderer/components/ui/dropdown-menu'
 import { cn } from '@renderer/lib/utils'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { calcTraffic } from '@renderer/utils/calc'
 import dayjs from 'dayjs'
 import React, { useEffect, useMemo, useState } from 'react'
 import EditFileModal from './edit-file-modal'
 import EditRulesModal from './edit-rules-modal'
 import EditInfoModal from './edit-info-modal'
-import AmneziaProfileDetailsModal from './amnezia-profile-details-modal'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { openFile } from '@renderer/utils/ipc'
 import { getVlessProfilePresentation } from '@renderer/utils/vless-profile-presentation'
-import {
-  getManagedProfileMetadata,
-  getProfileRuntimeCapabilities,
-  ProfileBadgeDescriptor
-} from '../../../../core/profiles/managed-profile'
-import { createUnifiedProfileItem, UnifiedBadge } from '../../../../core/ui/unified-ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,7 +37,6 @@ import {
   FileText,
   FolderOpen,
   HeadsetIcon,
-  Info,
   InfinityIcon,
   ListTree,
   Pencil,
@@ -92,7 +83,6 @@ const ProfileItem: React.FC<Props> = (props) => {
   const [openInfoEditor, setOpenInfoEditor] = useState(false)
   const [openFileEditor, setOpenFileEditor] = useState(false)
   const [openRulesEditor, setOpenRulesEditor] = useState(false)
-  const [openAmneziaDetails, setOpenAmneziaDetails] = useState(false)
   const {
     attributes,
     listeners,
@@ -111,14 +101,6 @@ const ProfileItem: React.FC<Props> = (props) => {
 
   const hasLimit = total > 0
   const expired = extra?.expire ? dayjs.unix(extra.expire).isBefore(dayjs()) : false
-  const unifiedProfile = useMemo(
-    () => createUnifiedProfileItem(info, isCurrent ? info.id : undefined),
-    [info, isCurrent]
-  )
-  const metadata = useMemo(() => getManagedProfileMetadata(info), [info])
-  const runtime = useMemo(() => getProfileRuntimeCapabilities(info), [info])
-  const badges = unifiedProfile.badges
-  const isAmnezia = metadata.profileKind === 'amnezia'
 
   const trafficRemaining = useMemo(() => {
     if (info.type !== 'remote' || !extra) return null
@@ -166,15 +148,6 @@ const ProfileItem: React.FC<Props> = (props) => {
         variant: 'default'
       })
     }
-    if (runtime.canViewDetails) {
-      list.push({
-        key: 'view-details',
-        label: t('profile.viewDetails'),
-        icon: <Info />,
-        showDivider: false,
-        variant: 'default'
-      })
-    }
     list.push(
       {
         key: 'edit-info',
@@ -188,27 +161,21 @@ const ProfileItem: React.FC<Props> = (props) => {
         label: t('profile.editFile'),
         icon: <FileText />,
         showDivider: false,
-        variant: 'default',
-        disabled: !runtime.canEditConfig,
-        disabledReason: !runtime.canEditConfig ? t('profile.actionNotSupported') : undefined
+        variant: 'default'
       },
       {
         key: 'edit-rules',
         label: t('profile.editRule'),
         icon: <ListTree />,
         showDivider: false,
-        variant: 'default',
-        disabled: !runtime.canEditRules,
-        disabledReason: !runtime.canEditRules ? t('profile.actionNotSupported') : undefined
+        variant: 'default'
       },
       {
         key: 'open-file',
         label: t('profile.openFile'),
         icon: <FolderOpen />,
         showDivider: true,
-        variant: 'default',
-        disabled: !runtime.canOpenConfigFile,
-        disabledReason: !runtime.canOpenConfigFile ? t('profile.actionNotSupported') : undefined
+        variant: 'default'
       },
       {
         key: 'delete',
@@ -219,14 +186,10 @@ const ProfileItem: React.FC<Props> = (props) => {
       }
     )
     return list
-  }, [info, runtime, t])
+  }, [info, t])
 
   const onMenuAction = async (key: string): Promise<void> => {
     switch (key) {
-      case 'view-details': {
-        setOpenAmneziaDetails(true)
-        break
-      }
       case 'update': {
         setUpdating(true)
         try {
@@ -277,10 +240,6 @@ const ProfileItem: React.FC<Props> = (props) => {
 
   const handleSelect = (): void => {
     if (disableSelect || switching) return
-    if (!runtime.canActivate) {
-      toast.error(t('profile.runtimeNotSupported'))
-      return
-    }
     setSelecting(true)
     onClick().finally(() => setSelecting(false))
   }
@@ -296,9 +255,6 @@ const ProfileItem: React.FC<Props> = (props) => {
     >
       {openFileEditor && <EditFileModal id={info.id} onClose={() => setOpenFileEditor(false)} />}
       {openRulesEditor && <EditRulesModal id={info.id} onClose={() => setOpenRulesEditor(false)} />}
-      {openAmneziaDetails && (
-        <AmneziaProfileDetailsModal id={info.id} onClose={() => setOpenAmneziaDetails(false)} />
-      )}
       {openInfoEditor && (
         <EditInfoModal
           item={info}
@@ -336,7 +292,6 @@ const ProfileItem: React.FC<Props> = (props) => {
         role="button"
         tabIndex={0}
         aria-selected={isCurrent}
-        aria-disabled={!runtime.canActivate}
         aria-busy={selecting || switching}
         onClick={handleSelect}
         onKeyDown={(event) => {
@@ -351,8 +306,7 @@ const ProfileItem: React.FC<Props> = (props) => {
             ? 'border-stroke-profile-active bg-profile-active hover:bg-profile-active/90'
             : 'border-stroke-profile-inactive bg-profile-inactive hover:bg-accent/60',
           selecting && 'opacity-60 scale-[0.98]',
-          switching && 'cursor-wait',
-          !runtime.canActivate && 'cursor-not-allowed'
+          switching && 'cursor-wait'
         )}
       >
         <div ref={setNodeRef} {...attributes} {...listeners} className="w-full h-full">
@@ -368,7 +322,10 @@ const ProfileItem: React.FC<Props> = (props) => {
                 }}
               />
             )}
-            <h3 title={info.name} className="text-sm font-semibold truncate flex-1 min-w-0 leading-tight">
+            <h3
+              title={info.name}
+              className="text-sm font-semibold truncate flex-1 min-w-0 leading-tight"
+            >
               {info.name}
             </h3>
             {vlessPresentation && (
@@ -381,7 +338,7 @@ const ProfileItem: React.FC<Props> = (props) => {
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
             >
-              {runtime.canRefresh && (
+              {info.type === 'remote' && (
                 <Button
                   size="icon-sm"
                   variant="ghost"
@@ -427,60 +384,22 @@ const ProfileItem: React.FC<Props> = (props) => {
             </div>
           </div>
 
-          {badges.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {badges.map((badge) => (
-                <Badge
-                  key={badge.code}
-                  variant={getBadgeVariant(badge)}
-                  className="max-w-full truncate text-[10px]"
-                >
-                  {getBadgeLabel(t, badge)}
-                </Badge>
-              ))}
-            </div>
-          )}
-
-          {isAmnezia ? (
-            <div className="grid grid-cols-2 mt-2">
-              <div className="pr-3 border-r border-foreground/10 justify-items-center">
-                <div className="text-[11px] text-muted-foreground">{t('profile.runtime')}</div>
-                <div
-                  className={cn(
-                    'text-xs font-bold mt-0.5 leading-tight',
-                    getRuntimeSupportClass(metadata.runtimeSupport)
-                  )}
-                >
-                  {getRuntimeSupportLabel(t, metadata.runtimeSupport)}
-                </div>
+          <div className="grid grid-cols-2 mt-2">
+            <div className="pr-3 border-r border-foreground/10 justify-items-center">
+              <div className="text-[11px] text-muted-foreground">
+                {t('profile.trafficRemaining')}
               </div>
-              <div className="pl-3 justify-items-center">
-                <div className="text-[11px] text-muted-foreground">{t('profile.status')}</div>
-                <div className="text-xs font-bold mt-0.5 leading-tight">
-                  {getValidityLabel(t, metadata.validityStatus)}
-                </div>
+              <div className="text-sm font-bold mt-0.5 leading-tight">
+                {hasLimit ? trafficRemaining : <InfinityIcon className="size-5" />}
               </div>
             </div>
-          ) : (
-            <div className="grid grid-cols-2 mt-2">
-              <div className="pr-3 border-r border-foreground/10 justify-items-center">
-                <div className="text-[11px] text-muted-foreground">
-                  {t('profile.trafficRemaining')}
-                </div>
-                <div className="text-sm font-bold mt-0.5 leading-tight">
-                  {hasLimit ? trafficRemaining : <InfinityIcon className="size-5" />}
-                </div>
-              </div>
-              <div className="pl-3 justify-items-center">
-                <div className="text-[11px] text-muted-foreground">
-                  {t('profile.daysRemaining')}
-                </div>
-                <div className="text-sm font-bold mt-0.5 leading-tight">
-                  {extra?.expire ? daysRemaining : <InfinityIcon className="size-5" />}
-                </div>
+            <div className="pl-3 justify-items-center">
+              <div className="text-[11px] text-muted-foreground">{t('profile.daysRemaining')}</div>
+              <div className="text-sm font-bold mt-0.5 leading-tight">
+                {extra?.expire ? daysRemaining : <InfinityIcon className="size-5" />}
               </div>
             </div>
-          )}
+          </div>
 
           {/* Footer */}
           <div className="border-t border-foreground/10 mt-3 pt-2 flex items-center justify-between text-[11px] text-muted-foreground">
@@ -497,104 +416,13 @@ const ProfileItem: React.FC<Props> = (props) => {
                 )}
               </>
             ) : (
-              <span>
-              {isAmnezia
-                ? t('profile.amneziaProfileLabel')
-                : vlessPresentation?.summary || t('profile.localProfileLabel')}
-              </span>
+              <span>{vlessPresentation?.summary || t('profile.localProfileLabel')}</span>
             )}
           </div>
         </div>
       </div>
     </div>
   )
-}
-
-function getBadgeVariant(badge: UnifiedBadge): 'default' | 'secondary' | 'destructive' | 'outline' {
-  if (badge.tone === 'danger') return 'destructive'
-  if (badge.tone === 'warning') return 'outline'
-  if (badge.tone === 'info') return 'secondary'
-  return 'outline'
-}
-
-function getBadgeLabel(
-  t: ReturnType<typeof useTranslation>['t'],
-  badge: UnifiedBadge | ProfileBadgeDescriptor
-): string {
-  if ('label' in badge && badge.label) return badge.label
-  if ('labelKey' in badge && badge.labelKey) return t(badge.labelKey)
-  const key = 'key' in badge ? badge.key : badge.code
-  switch (key) {
-    case 'imported':
-      return t('profile.badgeImported')
-    case 'amnezia':
-      return t('profile.badgeAmnezia')
-    case 'runtime_not_supported':
-      return t('profile.badgeRuntimeNotSupported')
-    case 'runtime_planned':
-      return t('profile.badgeRuntimePlanned')
-    case 'runtime_translatable':
-      return t('profile.badgeRuntimeTranslatable')
-    case 'runtime_requires_helper':
-      return t('profile.badgeRuntimeRequiresHelper')
-    case 'runtime_prototype_available':
-      return t('profile.badgeRuntimePrototypeAvailable')
-    case 'invalid':
-      return t('profile.badgeInvalid')
-    case 'partial':
-      return t('profile.badgePartial')
-    case 'mihomo':
-      return t('profile.badgeMihomo')
-  }
-  return key
-}
-
-function getRuntimeSupportLabel(
-  t: ReturnType<typeof useTranslation>['t'],
-  status: ProfileRuntimeSupport
-): string {
-  switch (status) {
-    case 'none':
-      return t('profile.runtimeSupportNone')
-    case 'planned':
-      return t('profile.runtimeSupportPlanned')
-    case 'available':
-      return t('profile.runtimeSupportAvailable')
-    case 'translatable':
-      return t('profile.runtimeSupportTranslatable')
-    case 'requires_helper':
-      return t('profile.runtimeSupportRequiresHelper')
-    case 'prototype_available':
-      return t('profile.runtimeSupportPrototypeAvailable')
-  }
-}
-
-function getRuntimeSupportClass(status: ProfileRuntimeSupport): string {
-  switch (status) {
-    case 'available':
-    case 'translatable':
-    case 'prototype_available':
-      return 'text-primary'
-    case 'requires_helper':
-    case 'planned':
-      return 'text-warning'
-    case 'none':
-      return 'text-muted-foreground'
-  }
-}
-
-function getValidityLabel(
-  t: ReturnType<typeof useTranslation>['t'],
-  status: ProfileValidityStatus
-): string {
-  switch (status) {
-    case 'invalid':
-      return t('profile.validityInvalid')
-    case 'partial':
-      return t('profile.validityPartial')
-    case 'valid':
-      return t('profile.validityValid')
-  }
 }
 
 export default ProfileItem

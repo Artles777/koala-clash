@@ -427,7 +427,7 @@ export async function detectWindowsNativeProcessBypassPrerequisites(
   if (!hasRequiredPrivileges) {
     issues.push({
       code: 'windows_admin_required',
-      message: 'Windows native process bypass requires an elevated helper service.'
+      message: 'Windows native process bypass requires an elevated service.'
     })
   }
   if (!wfpServiceAvailable) {
@@ -1172,13 +1172,13 @@ export function getWindowsNativeProcessBypassPlan(): NativeProcessBypassCommandP
     mechanism: windowsMechanism,
     requiredCapabilities: [
       'administrator/elevated context',
-      `${windowsServiceName} WFP helper service`,
+      `${windowsServiceName} WFP service`,
       `${windowsControllerCommand} controller`,
       'Windows Filtering Platform'
     ],
     setupSteps: [
       'detect Windows platform and elevated service prerequisites',
-      `resolve the ${windowsServiceName} WFP helper service`,
+      `resolve the ${windowsServiceName} WFP service`,
       `resolve the ${windowsControllerCommand} controller`,
       'ask the controller to apply process-aware WFP policy for exact PROCESS-NAME rules',
       'treat native bypass as active only when the controller reports dataPlaneActive'
