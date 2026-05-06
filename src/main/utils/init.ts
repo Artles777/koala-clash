@@ -151,6 +151,16 @@ async function migration(): Promise<void> {
     }
   }
 
+  if (mihomoConfig.sniffer && !mihomoConfig.sniffer.sniff?.QUIC) {
+    mihomoConfigPatch.sniffer = {
+      ...(mihomoConfigPatch.sniffer ?? {}),
+      sniff: {
+        ...(mihomoConfigPatch.sniffer?.sniff ?? {}),
+        QUIC: { ports: [443] }
+      }
+    }
+  }
+
   // 清理已弃用的配置
   if (mihomoConfig['external-controller-pipe' as keyof MihomoConfig]) {
     mihomoConfigPatch['external-controller-pipe' as keyof MihomoConfig] = undefined as never

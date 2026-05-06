@@ -101,6 +101,9 @@ export const defaultControledMihomoConfig: Partial<MihomoConfig> = {
       },
       TLS: {
         ports: [443]
+      },
+      QUIC: {
+        ports: [443]
       }
     },
     'skip-domain': ['+.push.apple.com'],
