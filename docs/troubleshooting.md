@@ -2,30 +2,13 @@
 
 Use this guide when the app starts but traffic does not route as expected.
 
-## Helper Not Found
+## Amnezia Import Rejected
 
-What it means: Koala cannot find the bundled `amnezia-helper` binary.
+What it means: the `vpn://` input is not a self-contained AmneziaWG/WireGuard
+profile that can run directly through Mihomo.
 
-Check:
-
-- packaged builds should contain `resources/files/amnezia-helper/<platform>/<arch>/`;
-- development builds can use `KOALA_AMNEZIA_HELPER_BACKEND_PATH`;
-- support/debug should show helper source as `Bundled` or `Dev override`.
-
-## Helper Not Ready
-
-What it means: the helper process started, but Koala has not confirmed readiness.
-
-Likely causes:
-
-- invalid or unsupported `vpn://` profile;
-- helper binary cannot execute on this platform/arch;
-- local proxy failed to bind;
-- handshake was not observed;
-- connectivity probe failed.
-
-Open profile details/debug and check helper logs, readiness state, and startup
-preflight blockers.
+Check that the profile includes endpoint host and port, private key, peer public
+key, local address, allowed IPs, and AmneziaWG options when applicable.
 
 ## TUN Permission Error
 
@@ -45,43 +28,6 @@ Check:
 After moving a macOS `.app` to another folder or machine, reinstall core/service
 permissions from the same app path.
 
-## UDP Not Validated
-
-Realtime apps may connect but voice/video can be unstable if UDP is unsupported
-or only partially validated.
-
-Check:
-
-- support/debug UDP status;
-- realtime confidence warnings;
-- preset smoke result;
-- whether a final `MATCH,VPN / PROXY` rule exists for VPN-owned traffic.
-
-If UDP is unknown or TCP-only, Koala should report that honestly instead of
-claiming realtime traffic is fully validated.
-
-## Preset Confidence Is Low Or Medium
-
-Common causes:
-
-- no final catch-all VPN rule;
-- only domain rules exist for an app that uses IP media endpoints;
-- process rules are fallback-only on the current platform;
-- UDP is not end-to-end validated;
-- observed IP evidence is missing or stale.
-
-Use `Run preset check`, `Run preset smoke`, and observed IP promotion where
-available. Mark a preset as verified only after a real app session works on the
-current device/network.
-
-## No Packaged Evidence
-
-This is normal until testers collect evidence from packaged builds.
-
-Local smoke/check evidence helps support the current machine. Packaged evidence
-is release evidence and must be generated from real packaged app runs on target
-platforms.
-
 ## macOS Fallback-Only Confusion
 
 On macOS, `PROCESS-NAME,DIRECT` is not native process split tunneling yet. It can
@@ -91,3 +37,63 @@ bypass should use address-based rules where possible.
 If a macOS process rule appears to match but traffic still times out, add or
 promote stable destination IPs as `IP-CIDR` rules, or route the whole app through
 VPN with stronger domain/catch-all coverage.
+
+## After Amnezia-Helper Removal
+
+The standalone `amnezia-helper` SOCKS sidecar has been removed; AmneziaWG now
+runs through the bundled Mihomo core natively (`type: wireguard` with
+`amnezia-wg-option`). Three classes of issues can show up after the upgrade.
+
+### "core_does_not_support_amnezia_wg" on import
+
+The bundled Mihomo core is too old and rejects `amnezia-wg-option`. Re-run the
+prepare step to refresh the sidecar:
+
+```sh
+pnpm prepare
+# or, when packaging:
+pnpm build:mac    # / build:win / build:linux
+```
+
+If the freshly downloaded core still reports the same error, switch the
+configured core under Settings → Core to `mihomo-alpha`, which always carries
+the AmneziaWG patches.
+
+### UDP traffic falls outside the VPN (Discord voice, gaming, DNS)
+
+AmneziaWG profiles imported through `vpn://` now ship with two safety nets:
+
+- a `DIRECT,no-resolve` rule that pins the WireGuard endpoint host so packets
+  destined to the upstream do not loop through TUN;
+- a `fallback` PROXY group with a periodic `generate_204` health check that
+  drops back to `DIRECT` when the WG handshake stalls.
+
+If UDP still leaks, open the runtime config (Mihomo → Open Config) and
+confirm:
+
+- the first rule is `IP-CIDR,<endpoint>/32,DIRECT,no-resolve` (or
+  `IP-CIDR6,...,/128,DIRECT,no-resolve` for IPv6 endpoints, or
+  `DOMAIN,<host>,DIRECT,no-resolve` for FQDN endpoints);
+- the `PROXY` group `type` is `fallback` and includes both your
+  AmneziaWG proxy and `DIRECT`;
+- `udp: true` is set on the WireGuard proxy itself.
+
+Re-import the `vpn://` key if any of those are missing — the file on disk may
+predate the new generator.
+
+### Stale placeholder profile after upgrade
+
+Older builds occasionally wrote placeholder YAML (no `proxies:` section) under
+the same profile id. The Amnezia importer now unlinks that file before writing
+the new config, but a profile whose YAML on disk lacks proxies cannot be
+activated as the current profile and will be rejected by `changeCurrentProfile`.
+
+To recover manually:
+
+1. Quit the app.
+2. Delete the offending YAML in `<userData>/profiles/` (the file id matches the
+   `profileItem.id` from `profile.yaml`).
+3. Re-import the AmneziaWG `vpn://` key.
+
+You can also remove the broken profile from Profiles UI and re-import — the
+importer will rewrite a clean YAML on the next import.
